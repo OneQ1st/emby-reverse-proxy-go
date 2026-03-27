@@ -1,14 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 )
-
-var urlPattern = regexp.MustCompile(`https?://[^\s"'<>` + "`" + `\(\)]+`)
 
 func rewriteResponseHeaders(resp *http.Response, baseURL string) {
 	if loc := resp.Header.Get("Location"); loc != "" {
@@ -40,10 +38,22 @@ func shouldRewriteBody(contentType string) bool {
 	return false
 }
 
-func rewriteBody(body []byte, baseURL string) []byte {
-	return urlPattern.ReplaceAllFunc(body, func(match []byte) []byte {
-		return []byte(rewriteSingleURL(string(match), baseURL))
-	})
+// rewriteBody replaces upstream origin URLs with proxy URLs using simple
+// byte replacement — no regex. Handles both with-port and without-port forms.
+func rewriteBody(body []byte, baseURL string, t *target) []byte {
+	proxyPrefix := []byte(baseURL + "/" + t.Scheme + "/" + t.Domain + "/" + strconv.Itoa(t.Port))
+
+	// Replace explicit port form: https://domain:443
+	withPort := []byte(t.Scheme + "://" + t.Domain + ":" + strconv.Itoa(t.Port))
+	body = bytes.ReplaceAll(body, withPort, proxyPrefix)
+
+	// Replace implicit port form: https://domain (only for default ports)
+	if isDefaultPort(t.Scheme, t.Port) {
+		withoutPort := []byte(t.Scheme + "://" + t.Domain)
+		body = bytes.ReplaceAll(body, withoutPort, proxyPrefix)
+	}
+
+	return body
 }
 
 func rewriteSingleURL(rawURL, baseURL string) string {

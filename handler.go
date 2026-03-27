@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -10,8 +11,25 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// copyBufPool reuses 32 KB buffers for io.CopyBuffer, avoiding per-request allocation.
+var copyBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 32*1024)
+		return &buf
+	},
+}
+
+// gzipWriterPool reuses gzip writers to avoid heavy init cost per response.
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		w, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
+		return w
+	},
+}
 
 type ProxyHandler struct {
 	client *http.Client
@@ -160,7 +178,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ct := resp.Header.Get("Content-Type")
 	if shouldRewriteBody(ct) {
-		h.serveRewrittenBody(w, resp, baseURL)
+		h.serveRewrittenBody(w, r, resp, baseURL, t)
 		log.Printf("[API] %d %s %s/%s (%s)", resp.StatusCode, r.Method, t.Domain, t.Path, time.Since(start))
 	} else {
 		written := h.serveStreamBody(w, resp)
@@ -177,25 +195,41 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *ProxyHandler) serveRewrittenBody(w http.ResponseWriter, resp *http.Response, baseURL string) {
+func (h *ProxyHandler) serveRewrittenBody(w http.ResponseWriter, r *http.Request, resp *http.Response, baseURL string, t *target) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("[ERROR] read body failed: %v", err)
 		w.WriteHeader(http.StatusBadGateway)
 		return
 	}
-	rewritten := rewriteBody(body, baseURL)
-	w.Header().Set("Content-Length", strconv.Itoa(len(rewritten)))
-	w.Header().Del("Content-Encoding")
-	w.WriteHeader(resp.StatusCode)
-	w.Write(rewritten)
+	rewritten := rewriteBody(body, baseURL, t)
+
+	// Compress rewritten text responses if client supports gzip.
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Del("Content-Length")
+		w.WriteHeader(resp.StatusCode)
+
+		gz := gzipWriterPool.Get().(*gzip.Writer)
+		gz.Reset(w)
+		gz.Write(rewritten)
+		gz.Close()
+		gzipWriterPool.Put(gz)
+	} else {
+		w.Header().Set("Content-Length", strconv.Itoa(len(rewritten)))
+		w.Header().Del("Content-Encoding")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(rewritten)
+	}
 }
 
-// serveStreamBody pipes upstream to client via io.Copy.
+// serveStreamBody pipes upstream to client via io.CopyBuffer with pooled buffer.
 // No intermediate buffering — on Linux this can trigger splice(2).
 func (h *ProxyHandler) serveStreamBody(w http.ResponseWriter, resp *http.Response) int64 {
 	w.WriteHeader(resp.StatusCode)
-	written, _ := io.Copy(w, resp.Body)
+	bufp := copyBufPool.Get().(*[]byte)
+	written, _ := io.CopyBuffer(w, resp.Body, *bufp)
+	copyBufPool.Put(bufp)
 	return written
 }
 
