@@ -185,7 +185,7 @@ func (h *ProxyHandler) serveStreamBody(w http.ResponseWriter, resp *http.Respons
 	bufp := copyBufPool.Get().(*[]byte)
 	written, err := io.CopyBuffer(w, resp.Body, *bufp)
 	copyBufPool.Put(bufp)
-	if err != nil {
+	if err != nil && !isNetClosedError(err) {
 		log.Printf("[ERROR] stream copy failed: %v", err)
 	}
 	return written
