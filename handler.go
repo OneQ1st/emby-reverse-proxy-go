@@ -39,8 +39,22 @@ type ProxyHandler struct {
 	allowUnsafeDNS bool
 }
 
-func NewProxyHandler() *ProxyHandler {
-	h := &ProxyHandler{resolver: net.DefaultResolver}
+func parseBlockPrivateTargets(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+func NewProxyHandler(blockPrivateTargets bool) *ProxyHandler {
+	h := &ProxyHandler{resolver: net.DefaultResolver, allowUnsafeDNS: !blockPrivateTargets}
 	transport := &http.Transport{
 		MaxIdleConns:        200,
 		MaxIdleConnsPerHost: 20,

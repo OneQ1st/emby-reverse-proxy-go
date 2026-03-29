@@ -220,3 +220,35 @@ func TestValidateTargetSafety(t *testing.T) {
 		t.Fatalf("validateTargetSafety(%q) unexpected error: %v", allowed.Domain, err)
 	}
 }
+
+func TestParseBlockPrivateTargets(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   string
+		want  bool
+	}{
+		{name: "default empty true", raw: "", want: true},
+		{name: "explicit true", raw: "true", want: true},
+		{name: "numeric true", raw: "1", want: true},
+		{name: "explicit false", raw: "false", want: false},
+		{name: "numeric false", raw: "0", want: false},
+		{name: "invalid keeps safe default", raw: "maybe", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseBlockPrivateTargets(tt.raw); got != tt.want {
+				t.Fatalf("parseBlockPrivateTargets(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewProxyHandlerBlockPrivateTargets(t *testing.T) {
+	if handler := NewProxyHandler(true); handler.allowUnsafeDNS {
+		t.Fatal("NewProxyHandler(true) should keep private target blocking enabled")
+	}
+	if handler := NewProxyHandler(false); !handler.allowUnsafeDNS {
+		t.Fatal("NewProxyHandler(false) should disable private target blocking")
+	}
+}

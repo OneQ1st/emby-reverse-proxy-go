@@ -40,3 +40,4 @@ services:
     restart: unless-stopped
     environment:
       LISTEN_ADDR: ':8080'
+      BLOCK_PRIVATE_TARGETS: 'true'

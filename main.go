@@ -19,8 +19,9 @@ func main() {
 	if addr == "" {
 		addr = ":8080"
 	}
+	blockPrivateTargets := parseBlockPrivateTargets(os.Getenv("BLOCK_PRIVATE_TARGETS"))
 
-	handler := NewProxyHandler()
+	handler := NewProxyHandler(blockPrivateTargets)
 
 	mux := http.NewServeMux()
 

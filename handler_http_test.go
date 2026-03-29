@@ -11,7 +11,7 @@ import (
 )
 
 func newUnsafeTestProxyHandler() *ProxyHandler {
-	h := NewProxyHandler()
+	h := NewProxyHandler(true)
 	h.allowUnsafeDNS = true
 	return h
 }
@@ -212,7 +212,7 @@ func TestServeHTTPRemovesSensitiveResponseHeaders(t *testing.T) {
 }
 
 func TestServeHTTPBlocksDangerousTarget(t *testing.T) {
-	handler := NewProxyHandler()
+	handler := NewProxyHandler(true)
 	req := httptest.NewRequest(http.MethodGet, "/http/127.0.0.1/8096/Items", nil)
 	rr := httptest.NewRecorder()
 

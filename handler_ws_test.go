@@ -398,7 +398,7 @@ func TestWebSocketProxyUpgradeRejected(t *testing.T) {
 }
 
 func TestWebSocketProxyBlocksDangerousTarget(t *testing.T) {
-	handler := NewProxyHandler()
+	handler := NewProxyHandler(true)
 	proxy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() proxy error = %v", err)
