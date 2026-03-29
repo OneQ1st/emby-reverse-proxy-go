@@ -56,9 +56,46 @@
 
 ## 快速开始
 
-### 1. 启动
+### 1. 准备 `docker-compose.yml`
 
-仓库自带 `docker-compose.yml`，会一起启动：
+**不需要下载整个仓库。** 对大多数用户来说，只需要单独下载仓库里的 `docker-compose.yml` 文件，放到一个你准备用来部署的目录里就够了。
+
+如果你只是想直接部署现成镜像，`docker-compose.yml` 就是必需品；源码、测试文件和 `Dockerfile` 都不是启动代理服务的前提。
+
+### 2. 启动前先改数据库配置
+
+在第一次执行 `docker compose up -d` 之前，先打开 `docker-compose.yml`，把数据库相关配置改掉，**不要直接使用示例里的默认用户名和密码**。
+
+至少改这几项，并保持两边一致：
+
+```yaml
+services:
+  app:
+    environment:
+      DB_MYSQL_USER: '改成你自己的用户名'
+      DB_MYSQL_PASSWORD: '改成强密码'
+      DB_MYSQL_NAME: '改成你自己的数据库名'
+
+  db:
+    environment:
+      MYSQL_ROOT_PASSWORD: '改成强密码'
+      MYSQL_DATABASE: '改成和上面一致的数据库名'
+      MYSQL_USER: '改成和上面一致的用户名'
+      MYSQL_PASSWORD: '改成和上面一致的强密码'
+```
+
+注意：
+
+- `app` 里的 `DB_MYSQL_*` 要和 `db` 里的 `MYSQL_*` 对应上
+- 不要只改一边，不然 Nginx Proxy Manager 连不上数据库
+- 这是有状态服务，**上线后不要随手只改环境变量不处理现有数据卷**，否则很容易把现有部署搞坏
+- 简单说：**首次部署前改最省事，跑起来以后再改最麻烦**
+
+这样做不是形式主义，而是为了避免把过于弱的默认凭据直接带进长期运行环境。
+
+### 3. 启动
+
+仓库自带的 `docker-compose.yml` 会一起启动：
 
 - `app`：Nginx Proxy Manager
 - `db`：MariaDB
@@ -77,7 +114,7 @@ docker compose up -d
 - `emby-proxy` 只在 compose 内部网络暴露 `:8080`
 - 数据目录：`./data`、`./letsencrypt`、`./mysql`
 
-### 2. 在 Nginx Proxy Manager 里配置上游
+### 4. 在 Nginx Proxy Manager 里配置上游
 
 Proxy Host 推荐配置：
 
