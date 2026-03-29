@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"reflect"
 	"testing"
@@ -165,5 +167,56 @@ func TestBuildTargetURL(t *testing.T) {
 				t.Fatalf("buildTargetURL() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestIsDangerousIP(t *testing.T) {
+	tests := []struct {
+		ip   string
+		want bool
+	}{
+		{ip: "127.0.0.1", want: true},
+		{ip: "10.0.0.1", want: true},
+		{ip: "172.16.0.1", want: true},
+		{ip: "192.168.1.10", want: true},
+		{ip: "169.254.10.20", want: true},
+		{ip: "0.0.0.0", want: true},
+		{ip: "::1", want: true},
+		{ip: "::", want: true},
+		{ip: "fe80::1", want: true},
+		{ip: "fc00::1", want: true},
+		{ip: "8.8.8.8", want: false},
+		{ip: "2606:4700:4700::1111", want: false},
+	}
+
+	for _, tt := range tests {
+		ip := net.ParseIP(tt.ip)
+		if got := isDangerousIP(ip); got != tt.want {
+			t.Fatalf("isDangerousIP(%q) = %v, want %v", tt.ip, got, tt.want)
+		}
+	}
+}
+
+func TestValidateTargetSafety(t *testing.T) {
+	ctx := context.Background()
+	resolver := net.DefaultResolver
+
+	blocked := []*target{
+		{Scheme: "http", Domain: "localhost", Port: 8096},
+		{Scheme: "http", Domain: "LOCALHOST.", Port: 8096},
+		{Scheme: "http", Domain: "host.docker.internal", Port: 8096},
+		{Scheme: "http", Domain: "127.0.0.1", Port: 8096},
+		{Scheme: "http", Domain: "192.168.1.10", Port: 8096},
+		{Scheme: "http", Domain: "::1", Port: 8096},
+	}
+	for _, tt := range blocked {
+		if err := validateTargetSafety(ctx, resolver, tt); err == nil {
+			t.Fatalf("validateTargetSafety(%q) expected blocked error", tt.Domain)
+		}
+	}
+
+	allowed := &target{Scheme: "https", Domain: "8.8.8.8", Port: 443}
+	if err := validateTargetSafety(ctx, resolver, allowed); err != nil {
+		t.Fatalf("validateTargetSafety(%q) unexpected error: %v", allowed.Domain, err)
 	}
 }

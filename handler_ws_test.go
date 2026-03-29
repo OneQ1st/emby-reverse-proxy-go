@@ -147,7 +147,7 @@ func TestWebSocketProxyHandshake(t *testing.T) {
 		upstreamDone <- nil
 	}()
 
-	handler := NewProxyHandler()
+	handler := newUnsafeTestProxyHandler()
 	proxy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() proxy error = %v", err)
@@ -261,7 +261,7 @@ func TestWebSocketProxyBufferedClientPayload(t *testing.T) {
 		upstreamDone <- nil
 	}()
 
-	handler := NewProxyHandler()
+	handler := newUnsafeTestProxyHandler()
 	proxy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() proxy error = %v", err)
@@ -345,7 +345,7 @@ func TestWebSocketProxyUpgradeRejected(t *testing.T) {
 		upstreamDone <- nil
 	}()
 
-	handler := NewProxyHandler()
+	handler := newUnsafeTestProxyHandler()
 	proxy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() proxy error = %v", err)
@@ -390,6 +390,51 @@ func TestWebSocketProxyUpgradeRejected(t *testing.T) {
 	}
 	if string(body) != "upgrade required" {
 		t.Fatalf("body = %q, want %q", string(body), "upgrade required")
+	}
+
+	if err := <-upstreamDone; err != nil {
+		t.Fatalf("upstream websocket error = %v", err)
+	}
+}
+
+func TestWebSocketProxyBlocksDangerousTarget(t *testing.T) {
+	handler := NewProxyHandler()
+	proxy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() proxy error = %v", err)
+	}
+	defer proxy.Close()
+
+	server := &http.Server{Handler: handler}
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- server.Serve(proxy)
+	}()
+	defer func() {
+		_ = server.Close()
+		if err := <-serverDone; err != nil && err != http.ErrServerClosed {
+			t.Fatalf("server.Serve() error = %v", err)
+		}
+	}()
+
+	clientConn, err := net.Dial("tcp", proxy.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial() proxy error = %v", err)
+	}
+	defer clientConn.Close()
+	_ = clientConn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	request := "GET /http/127.0.0.1/8096/socket HTTP/1.1\r\nHost: proxy.example.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: test-key\r\nSec-WebSocket-Version: 13\r\n\r\n"
+	if _, err := clientConn.Write([]byte(request)); err != nil {
+		t.Fatalf("client write request error = %v", err)
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(clientConn), nil)
+	if err != nil {
+		t.Fatalf("ReadResponse() error = %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
 }
 

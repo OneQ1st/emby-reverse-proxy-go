@@ -10,6 +10,12 @@ import (
 	"testing"
 )
 
+func newUnsafeTestProxyHandler() *ProxyHandler {
+	h := NewProxyHandler()
+	h.allowUnsafeDNS = true
+	return h
+}
+
 func TestLooksLikeMedia(t *testing.T) {
 	tests := []struct {
 		path string
@@ -48,7 +54,7 @@ func TestNormalizeContentEncoding(t *testing.T) {
 }
 
 func TestServeHTTPBadTarget(t *testing.T) {
-	handler := NewProxyHandler()
+	handler := newUnsafeTestProxyHandler()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 
@@ -79,7 +85,7 @@ func TestServeHTTPRewriteBodyPath(t *testing.T) {
 	defer upstream.Close()
 
 	port := upstream.Listener.Addr().(*net.TCPAddr).Port
-	handler := NewProxyHandler()
+	handler := newUnsafeTestProxyHandler()
 	req := httptest.NewRequest(http.MethodGet, "/http/127.0.0.1/"+strconv.Itoa(port)+"/Items", nil)
 	req.Host = "proxy.example.com"
 	req.Header.Set("X-Forwarded-Proto", "https")
@@ -112,7 +118,7 @@ func TestServeHTTPStreamPathAndRange(t *testing.T) {
 	defer upstream.Close()
 
 	port := upstream.Listener.Addr().(*net.TCPAddr).Port
-	handler := NewProxyHandler()
+	handler := newUnsafeTestProxyHandler()
 	req := httptest.NewRequest(http.MethodGet, "/http/127.0.0.1/"+strconv.Itoa(port)+"/Videos/1/stream.mp4", nil)
 	req.Header.Set("Range", "bytes=0-15")
 	rr := httptest.NewRecorder()
@@ -135,7 +141,7 @@ func TestServeHTTPRewriteRedirectHeaders(t *testing.T) {
 	defer upstream.Close()
 
 	port := upstream.Listener.Addr().(*net.TCPAddr).Port
-	handler := NewProxyHandler()
+	handler := newUnsafeTestProxyHandler()
 	req := httptest.NewRequest(http.MethodGet, "/http/127.0.0.1/"+strconv.Itoa(port)+"/redirect", nil)
 	req.Host = "proxy.example.com"
 	req.Header.Set("X-Forwarded-Proto", "https")
@@ -163,7 +169,7 @@ func TestServeHTTPCompressedResponseFallsBackToStream(t *testing.T) {
 	defer upstream.Close()
 
 	port := upstream.Listener.Addr().(*net.TCPAddr).Port
-	handler := NewProxyHandler()
+	handler := newUnsafeTestProxyHandler()
 	req := httptest.NewRequest(http.MethodGet, "/http/127.0.0.1/"+strconv.Itoa(port)+"/Items", nil)
 	rr := httptest.NewRecorder()
 
@@ -192,7 +198,7 @@ func TestServeHTTPRemovesSensitiveResponseHeaders(t *testing.T) {
 	defer upstream.Close()
 
 	port := upstream.Listener.Addr().(*net.TCPAddr).Port
-	handler := NewProxyHandler()
+	handler := newUnsafeTestProxyHandler()
 	req := httptest.NewRequest(http.MethodGet, "/http/127.0.0.1/"+strconv.Itoa(port)+"/blob.bin", nil)
 	rr := httptest.NewRecorder()
 
@@ -202,5 +208,20 @@ func TestServeHTTPRemovesSensitiveResponseHeaders(t *testing.T) {
 		if got := rr.Header().Get(name); got != "" {
 			t.Fatalf("%s = %q, want empty", name, got)
 		}
+	}
+}
+
+func TestServeHTTPBlocksDangerousTarget(t *testing.T) {
+	handler := NewProxyHandler()
+	req := httptest.NewRequest(http.MethodGet, "/http/127.0.0.1/8096/Items", nil)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(rr.Body.String(), "blocked target host") {
+		t.Fatalf("body = %q, want blocked target host message", rr.Body.String())
 	}
 }

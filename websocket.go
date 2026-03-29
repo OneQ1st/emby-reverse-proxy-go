@@ -35,7 +35,7 @@ func (h *ProxyHandler) serveWebSocket(w http.ResponseWriter, r *http.Request, t 
 	defer clientConn.Close()
 	_ = clientConn.SetDeadline(time.Now().Add(webSocketHandshakeTimeout))
 
-	upstreamConn, err := dialTargetConn(t)
+	upstreamConn, err := h.dialTargetConn(r.Context(), t)
 	if err != nil {
 		log.Printf("[ERROR] websocket dial %s/%s failed: %v", t.Domain, t.Path, err)
 		writeHijackedHTTPError(clientRW, http.StatusBadGateway, "upstream websocket connection failed")
@@ -116,13 +116,18 @@ func isWebSocketRequest(r *http.Request) bool {
 	return headerContainsToken(r.Header, "Connection", "upgrade") && strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
 }
 
-func dialTargetConn(t *target) (net.Conn, error) {
+func (h *ProxyHandler) dialTargetConn(ctx context.Context, t *target) (net.Conn, error) {
+	if !h.allowUnsafeDNS {
+		if err := validateTargetSafety(ctx, h.resolver, t); err != nil {
+			return nil, err
+		}
+	}
 	addr := net.JoinHostPort(t.Domain, strconv.Itoa(t.Port))
 	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 60 * time.Second}
 	if t.Scheme == "https" {
 		return tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: t.Domain})
 	}
-	return dialer.Dial("tcp", addr)
+	return dialer.DialContext(ctx, "tcp", addr)
 }
 
 func writeWebSocketRequest(conn net.Conn, r *http.Request, t *target) error {

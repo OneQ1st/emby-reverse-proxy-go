@@ -38,13 +38,14 @@
 - 查询参数会原样透传
 - 根路径 `/` 会返回 `400 Bad Request`
 - 健康检查固定为 `/health`
+- 目标地址会做安全限制：拒绝本机、Docker 宿主机名、私网、链路本地地址和未指定地址
 
 示例：
 
 ```text
 /https/emby.example.com/443/
-/http/192.168.1.10/8096/web/index.html
-/http/192.168.1.10/8096/emby/Items?api_key=xxxx
+/http/public-emby.example.net/8096/web/index.html
+/http/public-emby.example.net/8096/emby/Items?api_key=xxxx
 ```
 
 错误示例：
@@ -149,9 +150,25 @@ proxy_max_temp_file_size 0;
 假设外部代理域名是 `https://proxy.example.com`：
 
 - Emby HTTPS 首页：`https://proxy.example.com/https/emby.example.com/443/`
-- Emby HTTP 首页：`https://proxy.example.com/http/192.168.1.10/8096/`
-- API 请求：`https://proxy.example.com/http/192.168.1.10/8096/emby/Items?api_key=xxxx`
-- Web 页面：`https://proxy.example.com/http/192.168.1.10/8096/web/index.html`
+- Emby HTTP 首页：`https://proxy.example.com/http/public-emby.example.net/8096/`
+- API 请求：`https://proxy.example.com/http/public-emby.example.net/8096/emby/Items?api_key=xxxx`
+- Web 页面：`https://proxy.example.com/http/public-emby.example.net/8096/web/index.html`
+
+## 目标地址安全限制
+
+为了减少公网暴露时被滥用成跳板代理的风险，代理现在会拒绝以下目标：
+
+- 主机名：`localhost`、`host.docker.internal`
+- IPv4：`127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`、`0.0.0.0`
+- IPv6：`::1`、`fc00::/7`、`fe80::/10`、`::`
+
+另外，域名不是只看字符串。代理会先做 DNS 解析；只要解析结果里有任意一个 IP 落在上面的范围内，请求就会直接返回 `400 Bad Request`。
+
+这意味着：
+
+- 仍然支持代理公网可达的 Emby
+- **不再支持** 代理 `192.168.x.x`、`10.x.x.x`、`172.16-31.x.x` 这类内网 Emby
+- 如果你本来就是拿它代理家庭局域网 Emby，这个版本不适合直接升级后无脑继续用
 
 ## 改写规则
 
@@ -331,7 +348,7 @@ curl -i "http://<你的代理域名或IP>/"
 ### 4. 基础代理路径能不能通
 
 ```bash
-curl -i "https://proxy.example.com/http/192.168.1.10/8096/"
+curl -i "https://proxy.example.com/http/public-emby.example.net/8096/"
 ```
 
 ### 5. 文本接口有没有改写 URL

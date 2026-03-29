@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -124,4 +125,68 @@ func unproxyURL(raw string) string {
 		b.WriteString(t.Query)
 	}
 	return b.String()
+}
+
+func normalizeTargetHost(host string) string {
+	host = strings.TrimSpace(strings.ToLower(host))
+	return strings.TrimSuffix(host, ".")
+}
+
+func validateTargetSafety(ctx context.Context, resolver *net.Resolver, t *target) error {
+	return validateHostSafety(ctx, resolver, t.Domain)
+}
+
+func validateHostSafety(ctx context.Context, resolver *net.Resolver, host string) error {
+	normalized := normalizeTargetHost(host)
+	if normalized == "" {
+		return fmt.Errorf("domain is required")
+	}
+	if normalized == "localhost" || normalized == "host.docker.internal" {
+		return fmt.Errorf("blocked target host: %s", host)
+	}
+	ips, err := resolveTargetIPs(ctx, resolver, normalized)
+	if err != nil {
+		return err
+	}
+	for _, ip := range ips {
+		if isDangerousIP(ip) {
+			return fmt.Errorf("blocked target host: %s", host)
+		}
+	}
+	return nil
+}
+
+func resolveTargetIPs(ctx context.Context, resolver *net.Resolver, host string) ([]net.IP, error) {
+	normalized := normalizeTargetHost(host)
+	if normalized == "" {
+		return nil, fmt.Errorf("domain is required")
+	}
+	if ip := net.ParseIP(strings.Trim(normalized, "[]")); ip != nil {
+		return []net.IP{ip}, nil
+	}
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	addrs, err := resolver.LookupIPAddr(ctx, normalized)
+	if err != nil {
+		return nil, fmt.Errorf("resolve target host %s: %w", host, err)
+	}
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		ips = append(ips, addr.IP)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("resolve target host %s: no addresses", host)
+	}
+	return ips, nil
+}
+
+func isDangerousIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if mapped := ip.To4(); mapped != nil {
+		ip = mapped
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }

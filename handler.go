@@ -2,6 +2,7 @@ package main
 
 import (
 	"compress/gzip"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -33,20 +34,20 @@ var gzipWriterPool = sync.Pool{
 }
 
 type ProxyHandler struct {
-	client *http.Client
+	client         *http.Client
+	resolver       *net.Resolver
+	allowUnsafeDNS bool
 }
 
 func NewProxyHandler() *ProxyHandler {
+	h := &ProxyHandler{resolver: net.DefaultResolver}
 	transport := &http.Transport{
 		MaxIdleConns:        200,
 		MaxIdleConnsPerHost: 20,
 		MaxConnsPerHost:     50,
 		IdleConnTimeout:     120 * time.Second,
 		TLSClientConfig:     &tls.Config{},
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 60 * time.Second,
-		}).DialContext,
+		DialContext:         h.dialContext,
 		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 300 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
@@ -61,14 +62,13 @@ func NewProxyHandler() *ProxyHandler {
 		ReadBufferSize:  32 * 1024,
 	}
 
-	return &ProxyHandler{
-		client: &http.Client{
-			Transport: transport,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+	h.client = &http.Client{
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
 	}
+	return h
 }
 
 func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +78,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.allowUnsafeDNS {
+		if err := validateTargetSafety(r.Context(), h.resolver, t); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	start := time.Now()
 	if isWebSocketRequest(r) {
 		h.serveWebSocket(w, r, t, start)
@@ -85,6 +92,20 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.serveHTTPProxy(w, r, t, start)
+}
+
+func (h *ProxyHandler) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	if !h.allowUnsafeDNS {
+		if err := validateHostSafety(ctx, h.resolver, host); err != nil {
+			return nil, err
+		}
+	}
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 60 * time.Second}
+	return dialer.DialContext(ctx, network, addr)
 }
 
 func (h *ProxyHandler) serveHTTPProxy(w http.ResponseWriter, r *http.Request, t *target, start time.Time) {
@@ -234,3 +255,4 @@ func looksLikeMedia(path string) bool {
 	}
 	return false
 }
+
