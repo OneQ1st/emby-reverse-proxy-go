@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +85,124 @@ func TestWriteWebSocketRequestPreservesUpgradeHeaders(t *testing.T) {
 	}
 	if got := upstreamReq.Header.Get("X-Forwarded-For"); got != "" {
 		t.Fatalf("X-Forwarded-For = %q, want empty", got)
+	}
+}
+
+func TestWriteWebSocketRequestUsesSingleBracketIPv6Host(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	req, err := http.NewRequest(http.MethodGet, "http://proxy.example.com/http/[2001:db8::1]/8096/socket", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+
+	target := &target{Scheme: "http", Domain: "[2001:db8::1]", Port: 8096, Path: "socket"}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- writeWebSocketRequest(clientConn, req, target)
+	}()
+
+	reader := bufio.NewReader(serverConn)
+	upstreamReq, err := http.ReadRequest(reader)
+	if err != nil {
+		t.Fatalf("ReadRequest() error = %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("writeWebSocketRequest() error = %v", err)
+	}
+
+	if upstreamReq.Host != "[2001:db8::1]:8096" {
+		t.Fatalf("Host = %q, want %q", upstreamReq.Host, "[2001:db8::1]:8096")
+	}
+}
+
+func TestWebSocketRejectedUpgradeRewritesLocationHeader(t *testing.T) {
+	upstream, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer upstream.Close()
+
+	upstreamDone := make(chan error, 1)
+	go func() {
+		conn, err := upstream.Accept()
+		if err != nil {
+			upstreamDone <- err
+			return
+		}
+		defer conn.Close()
+
+		reader := bufio.NewReader(conn)
+		if _, err := http.ReadRequest(reader); err != nil {
+			upstreamDone <- err
+			return
+		}
+
+		resp := &http.Response{
+			Status:        "302 Found",
+			StatusCode:    http.StatusFound,
+			Proto:         "HTTP/1.1",
+			ProtoMajor:    1,
+			ProtoMinor:    1,
+			Header:        make(http.Header),
+			Body:          io.NopCloser(strings.NewReader("redirect")),
+			ContentLength: int64(len("redirect")),
+		}
+		resp.Header.Set("Location", "https://stream.example.com/socket")
+		if err := resp.Write(conn); err != nil {
+			upstreamDone <- err
+			return
+		}
+		upstreamDone <- nil
+	}()
+
+	handler := newUnsafeTestProxyHandler()
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	port := upstream.Addr().(*net.TCPAddr).Port
+	req, err := http.NewRequest(http.MethodGet, proxy.URL+"/http/127.0.0.1/"+fmt.Sprint(port)+"/socket", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Host = "proxy.example.com"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Key", "test-key")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+
+	client := proxy.Client()
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusFound)
+	}
+	wantLocation := "https://proxy.example.com/https/stream.example.com/443/socket"
+	if got := resp.Header.Get("Location"); got != wantLocation {
+		t.Fatalf("Location = %q, want %q", got, wantLocation)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(body) != "redirect" {
+		t.Fatalf("body = %q, want %q", string(body), "redirect")
+	}
+	if err := <-upstreamDone; err != nil {
+		t.Fatalf("upstream error = %v", err)
 	}
 }
 

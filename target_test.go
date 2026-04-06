@@ -159,12 +159,59 @@ func TestBuildTargetURL(t *testing.T) {
 			},
 			want: "http://emby.example.com:8096/",
 		},
+		{
+			name: "ipv6 literal keeps single brackets",
+			in: &target{
+				Scheme: "https",
+				Domain: "[2001:db8::1]",
+				Port:   8096,
+				Path:   "web/index.html",
+			},
+			want: "https://[2001:db8::1]:8096/web/index.html",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := buildTargetURL(tt.in); got != tt.want {
 				t.Fatalf("buildTargetURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTargetHostPort(t *testing.T) {
+	tests := []struct {
+		name string
+		in   *target
+		want string
+	}{
+		{
+			name: "hostname default https port",
+			in:   &target{Scheme: "https", Domain: "emby.example.com", Port: 443},
+			want: "emby.example.com",
+		},
+		{
+			name: "ipv6 default https port keeps brackets",
+			in:   &target{Scheme: "https", Domain: "[2001:db8::1]", Port: 443},
+			want: "[2001:db8::1]",
+		},
+		{
+			name: "ipv6 literal with custom port keeps single brackets",
+			in:   &target{Scheme: "https", Domain: "[2001:db8::1]", Port: 8096},
+			want: "[2001:db8::1]:8096",
+		},
+		{
+			name: "bare ipv6 with custom port gets brackets",
+			in:   &target{Scheme: "https", Domain: "2001:db8::1", Port: 8096},
+			want: "[2001:db8::1]:8096",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := targetHostPort(tt.in); got != tt.want {
+				t.Fatalf("targetHostPort() = %q, want %q", got, tt.want)
 			}
 		})
 	}

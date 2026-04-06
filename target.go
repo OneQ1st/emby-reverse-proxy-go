@@ -51,11 +51,12 @@ func parseTarget(path, query string) (*target, error) {
 }
 
 func buildTargetURL(t *target) string {
+	host := targetURLHost(t.Domain)
 	var b strings.Builder
-	b.Grow(len(t.Scheme) + 3 + len(t.Domain) + 6 + 1 + len(t.Path) + 1 + len(t.Query))
+	b.Grow(len(t.Scheme) + 3 + len(host) + 6 + 1 + len(t.Path) + 1 + len(t.Query))
 	b.WriteString(t.Scheme)
 	b.WriteString("://")
-	b.WriteString(t.Domain)
+	b.WriteString(host)
 	b.WriteByte(':')
 	b.WriteString(strconv.Itoa(t.Port))
 	b.WriteString(targetRequestPath(t))
@@ -66,11 +67,29 @@ func buildTargetURL(t *target) string {
 	return b.String()
 }
 
+func trimIPv6LiteralBrackets(host string) string {
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		inner := host[1 : len(host)-1]
+		if ip := net.ParseIP(inner); ip != nil && ip.To4() == nil {
+			return ip.String()
+		}
+	}
+	return host
+}
+
+func targetURLHost(host string) string {
+	host = trimIPv6LiteralBrackets(host)
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return "[" + ip.String() + "]"
+	}
+	return host
+}
+
 func targetHostPort(t *target) string {
 	if isDefaultPort(t.Scheme, t.Port) {
-		return t.Domain
+		return targetURLHost(t.Domain)
 	}
-	return net.JoinHostPort(t.Domain, strconv.Itoa(t.Port))
+	return net.JoinHostPort(trimIPv6LiteralBrackets(t.Domain), strconv.Itoa(t.Port))
 }
 
 func targetRequestPath(t *target) string {

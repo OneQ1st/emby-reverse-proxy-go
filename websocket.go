@@ -26,6 +26,7 @@ func (h *ProxyHandler) serveWebSocket(w http.ResponseWriter, r *http.Request, t 
 		return
 	}
 
+	baseURL := inferBaseURL(r)
 	clientConn, clientRW, err := hj.Hijack()
 	if err != nil {
 		log.Printf("[ERROR] hijack websocket connection failed: %v", err)
@@ -57,6 +58,7 @@ func (h *ProxyHandler) serveWebSocket(w http.ResponseWriter, r *http.Request, t 
 		writeHijackedHTTPError(clientRW, http.StatusBadGateway, "invalid upstream websocket response")
 		return
 	}
+	rewriteResponseHeaders(resp, baseURL)
 
 	statusLine := fmt.Sprintf("HTTP/1.1 %d %s\r\n", resp.StatusCode, http.StatusText(resp.StatusCode))
 	if _, err := clientRW.WriteString(statusLine); err != nil {
