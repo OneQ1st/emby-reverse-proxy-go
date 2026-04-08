@@ -27,8 +27,9 @@ sudo sh get-docker.sh
 
 ### 3）准备工作目录
 
-如果你**已经在使用 Nginx、Caddy、Nginx Proxy Manager 等反向代理工具**，进入它们所在的目录即可。  
-如果你**还没有任何反向代理环境**，可以先创建一个新目录：
+如果你**已经在使用 Nginx、Caddy、Nginx Proxy Manager 等反向代理工具**，进入它们所在的目录即可。接下来直接跳到6)。  
+
+如果你**还没有任何反向代理环境**，可以先创建一个新目录并进入：
 
 ```bash
 mkdir emby-proxy && cd emby-proxy
@@ -70,6 +71,8 @@ services:
 - `DB_MYSQL_USER` 和 `MYSQL_USER` 必须一致
 - `DB_MYSQL_PASSWORD` 和 `MYSQL_PASSWORD` 必须一致
 - 建议所有密码都设置为强密码
+
+下一步到7)。
 
 ### 6）如果你已经有自己的反向代理环境
 
@@ -135,19 +138,22 @@ http://你的服务器IP:81
 
 这里需要注意：
 
-- 把 `your.domain.com` 改成你自己的域名
+- 把 `npm.example.com` 改成你自己的域名
 - 把 `172.18.0.1` 改成你的 Docker 网关地址
-- 如果你是新安装环境，`172.18.0.1` 通常不用改
-- SSL 相关选项按你的实际情况勾选，然后保存
+- 如果你是新安装环境，`172.18.0.1` 通常不用改 
 
-保存后，你就可以通过域名访问 Nginx Proxy Manager。  
-由于首次创建账号时走的是 HTTP 明文，建议配置完成后顺手修改一下密码。
+SSL 相关选项按你的实际情况勾选，然后保存。
+
+保存后，你就可以通过域名访问 Nginx Proxy Manager，之后请使用 https 域名形式访问。
+由于首次创建账号时走的是 HTTP 明文，建议配置完成后在下一次使用域名访问时顺手修改一下密码。
 
 ### 4）反代 `emby-proxy` 服务
 
+与上一步一样，建立一个新的代理用来代理本服务。
+
 ![](screenshots/npm-2.png)
 
-这里把 `proxy.emby.com` 改成你自己的域名。前往 SSL 页面，同样按你的实际情况勾选。
+这里把 `proxy.example.com` 改成你自己的域名。前往 SSL 页面，同样按你的实际情况勾选。
 
 然后前往设置页，添加对应属性后保存：
 
