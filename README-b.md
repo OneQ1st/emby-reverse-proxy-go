@@ -175,14 +175,21 @@ proxy_max_temp_file_size 0;
 location / {
     proxy_pass http://emby-proxy:8080;
 
+    # 同443端口配置
     proxy_buffering off;
     proxy_request_buffering off;
     proxy_max_temp_file_size 0;
 
+    # 必须传递域名信息，否则无法识别端口
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-Port $server_port;
+    
+    # websocket支持
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
 }
 ```
 

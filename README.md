@@ -194,14 +194,21 @@ proxy_max_temp_file_size 0;
 location / {
     proxy_pass http://emby-proxy:8080;
 
+    # 同443端口配置
     proxy_buffering off;
     proxy_request_buffering off;
     proxy_max_temp_file_size 0;
 
+    # 必须传递域名信息，否则无法识别端口
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-Port $server_port;
+    
+    # websocket支持
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
 }
 ```
 
@@ -218,11 +225,11 @@ location / {
 location /custom/ {
     # 去掉前缀后，转发到后端服务
     proxy_pass http://emby-proxy:8080/;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Host $http_host;
     # 必须添加 X-Forwarded-Prefix，服务通过读取该值进行路径适配
     proxy_set_header X-Forwarded-Prefix /custom;
 
