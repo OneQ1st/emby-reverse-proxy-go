@@ -159,6 +159,8 @@ SSL 相关选项按你的实际情况勾选，然后保存。
 
 `自定义 Nginx 配置` 中填写：
 
+1) 使用默认443端口
+
 ```nginx
 proxy_buffering off;
 proxy_request_buffering off;
@@ -166,6 +168,25 @@ proxy_max_temp_file_size 0;
 ```
 
 ![](screenshots/npm-3.png)
+
+2) 使用了其他端口，如8443等，则需要写全，否则读取不到端口信息
+
+```nginx
+location / {
+    proxy_pass http://emby-proxy:8080;
+
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_max_temp_file_size 0;
+
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Port $server_port;
+}
+```
+
+![](screenshots/npm-4.png)
 
 到这里，基础部署就完成了。
 

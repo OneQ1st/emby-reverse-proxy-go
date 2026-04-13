@@ -178,7 +178,9 @@ Proxy Host 推荐配置：
 - **Cache Assets**: 关
 - **Block Common Exploits**: 建议先关
 
-`Custom Nginx Configuration` 建议只填这三行：
+`Custom Nginx Configuration` 填写：
+
+1) 使用默认443端口
 
 ```nginx
 proxy_buffering off;
@@ -186,11 +188,24 @@ proxy_request_buffering off;
 proxy_max_temp_file_size 0;
 ```
 
-如果你不用 NPM，也一样：核心要求不是“必须是 NPM”，而是**前置层必须负责 HTTPS**，并把请求按原始 Host/Proto 正确转发到 `emby-proxy:8080`。
+2) 使用了其他端口，如8443等，则需要写全，否则读取不到端口信息
 
-如果前置代理没有正确传递 `X-Forwarded-Proto` 和 `X-Forwarded-Host`，响应里改写出来的 URL 会不对。
+```nginx
+location / {
+    proxy_pass http://emby-proxy:8080;
 
-若你想使用自定义的字符串作为入口，以加强服务安全，可以使用以下配置：
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_max_temp_file_size 0;
+
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Port $server_port;
+}
+```
+
+3) 若你想使用自定义的字符串作为入口，以加强服务安全，可以使用以下配置：
 
 ```nginx
 # 只允许携带正确随机路径的请求通过
@@ -222,6 +237,10 @@ location /custom/ {
     proxy_set_header Connection "upgrade";
 }
 ```
+
+如果你不用 NPM，也一样：核心要求不是“必须是 NPM”，而是**前置层必须负责 HTTPS**，并把请求按原始 Host/Proto 正确转发到 `emby-proxy:8080`。
+
+如果前置代理没有正确传递 `X-Forwarded-Proto` 和 `X-Forwarded-Host`，响应里改写出来的 URL 会不对。
 
 ## HTTPS 和公网暴露
 
