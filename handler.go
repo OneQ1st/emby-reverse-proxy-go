@@ -170,7 +170,9 @@ func (h *ProxyHandler) serveHTTPProxy(w http.ResponseWriter, r *http.Request, t 
 	baseURL := inferBaseURL(r)
 	media := looksLikeMedia(t.Path)
 
-	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, buildTargetURL(t), r.Body)
+	upstreamTarget := *t
+	upstreamTarget.Path = rewriteBarePlaybackPathForHTTP(t.Path)
+	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, buildTargetURL(&upstreamTarget), r.Body)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return

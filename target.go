@@ -67,6 +67,46 @@ func buildTargetURL(t *target) string {
 	return b.String()
 }
 
+func rewriteBarePlaybackPathForHTTP(path string) string {
+	if path == "" || hasPathPrefixFold(path, "emby/") {
+		return path
+	}
+	if hasPathExactFold(path, "Items/Counts") {
+		return "emby/" + path
+	}
+	if hasPathExactFold(path, "System/Ext/ServerDomains") {
+		return "emby/" + path
+	}
+	if hasPathSuffixFold(path, "/PlaybackInfo") && hasPathPrefixFold(path, "Items/") {
+		return "emby/" + path
+	}
+	if hasPathSuffixFold(path, "/Similar") && hasPathPrefixFold(path, "Items/") {
+		return "emby/" + path
+	}
+	if hasPathSuffixFold(path, "/AdditionalParts") && hasPathPrefixFold(path, "Videos/") {
+		return "emby/" + path
+	}
+	return path
+}
+
+func hasPathExactFold(path, want string) bool {
+	return strings.EqualFold(path, want)
+}
+
+func hasPathPrefixFold(path, prefix string) bool {
+	if len(path) < len(prefix) {
+		return false
+	}
+	return strings.EqualFold(path[:len(prefix)], prefix)
+}
+
+func hasPathSuffixFold(path, suffix string) bool {
+	if len(path) < len(suffix) {
+		return false
+	}
+	return strings.EqualFold(path[len(path)-len(suffix):], suffix)
+}
+
 func trimIPv6LiteralBrackets(host string) string {
 	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
 		inner := host[1 : len(host)-1]

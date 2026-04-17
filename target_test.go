@@ -226,6 +226,32 @@ func TestBuildTargetURL(t *testing.T) {
 	}
 }
 
+func TestRewriteBarePlaybackPathForHTTP(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "rewrite bare items counts", path: "Items/Counts", want: "emby/Items/Counts"},
+		{name: "rewrite bare server domains", path: "System/Ext/ServerDomains", want: "emby/System/Ext/ServerDomains"},
+		{name: "rewrite bare playback info", path: "Items/123/PlaybackInfo", want: "emby/Items/123/PlaybackInfo"},
+		{name: "rewrite bare similar", path: "Items/123/Similar", want: "emby/Items/123/Similar"},
+		{name: "rewrite bare additional parts", path: "Videos/123/AdditionalParts", want: "emby/Videos/123/AdditionalParts"},
+		{name: "already prefixed stays same", path: "emby/Items/123/PlaybackInfo", want: "emby/Items/123/PlaybackInfo"},
+		{name: "normal media path stays same", path: "Videos/123/original.mkv", want: "Videos/123/original.mkv"},
+		{name: "bare users items stays same", path: "Users/123/Items", want: "Users/123/Items"},
+		{name: "system ping stays same", path: "System/Ping", want: "System/Ping"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := rewriteBarePlaybackPathForHTTP(tt.path); got != tt.want {
+				t.Fatalf("rewriteBarePlaybackPathForHTTP(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTargetHostPort(t *testing.T) {
 	tests := []struct {
 		name string

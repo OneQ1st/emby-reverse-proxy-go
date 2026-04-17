@@ -88,6 +88,91 @@ func TestNormalizeContentEncoding(t *testing.T) {
 	}
 }
 
+func TestServeHTTPBareItemsCountsRewritesToEmbyPrefix(t *testing.T) {
+	rr, _ := serveProxyRequest(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/emby/Items/Counts" {
+			t.Fatalf("path = %q, want %q", got, "/emby/Items/Counts")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MovieCount":1}`))
+	}, "/Items/Counts")
+
+	assertResponseStatus(t, rr, http.StatusOK)
+}
+
+func TestServeHTTPBareServerDomainsRewritesToEmbyPrefix(t *testing.T) {
+	rr, _ := serveProxyRequest(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/emby/System/Ext/ServerDomains" {
+			t.Fatalf("path = %q, want %q", got, "/emby/System/Ext/ServerDomains")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}, "/System/Ext/ServerDomains")
+
+	assertResponseStatus(t, rr, http.StatusOK)
+}
+
+func TestServeHTTPBarePlaybackInfoRewritesToEmbyPrefix(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if got := r.URL.Path; got != "/emby/Items/123/PlaybackInfo" {
+			t.Fatalf("path = %q, want %q", got, "/emby/Items/123/PlaybackInfo")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MediaSources":[]}`))
+	}))
+	defer upstream.Close()
+
+	port := upstream.Listener.Addr().(*net.TCPAddr).Port
+	handler := newUnsafeTestProxyHandler()
+	req := httptest.NewRequest(http.MethodPost, "/http/127.0.0.1/"+strconv.Itoa(port)+"/Items/123/PlaybackInfo", strings.NewReader(`{}`))
+	req.Host = "proxy.example.com"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	assertResponseStatus(t, rr, http.StatusOK)
+}
+
+func TestServeHTTPBareAdditionalPartsRewritesToEmbyPrefix(t *testing.T) {
+	rr, _ := serveProxyRequest(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/emby/Videos/123/AdditionalParts" {
+			t.Fatalf("path = %q, want %q", got, "/emby/Videos/123/AdditionalParts")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}, "/Videos/123/AdditionalParts")
+
+	assertResponseStatus(t, rr, http.StatusOK)
+}
+
+func TestServeHTTPBareSimilarRewritesToEmbyPrefix(t *testing.T) {
+	rr, _ := serveProxyRequest(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/emby/Items/123/Similar" {
+			t.Fatalf("path = %q, want %q", got, "/emby/Items/123/Similar")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Items":[]}`))
+	}, "/Items/123/Similar")
+
+	assertResponseStatus(t, rr, http.StatusOK)
+}
+
+func TestServeHTTPBareMediaPathStaysUnchanged(t *testing.T) {
+	rr, _ := serveProxyRequest(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/Videos/123/original.mkv" {
+			t.Fatalf("path = %q, want %q", got, "/Videos/123/original.mkv")
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("ok"))
+	}, "/Videos/123/original.mkv")
+
+	assertResponseStatus(t, rr, http.StatusOK)
+}
+
 func TestServeHTTPBadTarget(t *testing.T) {
 	handler := newUnsafeTestProxyHandler()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
