@@ -208,15 +208,59 @@ func TestServeHTTPRedirectRewritesThirdPartyStreamLocation(t *testing.T) {
 	}
 }
 
-func TestServeHTTPRedirectNonAbsoluteLocationUntouched(t *testing.T) {
-	rr, _ := serveProxyRequest(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Location", "/web/index.html")
+func TestServeHTTPRedirectNonAbsoluteLocationRewritesToProxyPath(t *testing.T) {
+	rr, port := serveProxyRequest(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/img/poster/123/img.webp@400_")
 		w.WriteHeader(http.StatusFound)
-	}, "/redirect")
+	}, "/emby/Items/123/Images/Primary")
 
 	assertResponseStatus(t, rr, http.StatusFound)
-	if got := rr.Header().Get("Location"); got != "/web/index.html" {
-		t.Fatalf("Location = %q, want %q", got, "/web/index.html")
+	want := "https://proxy.example.com/http/127.0.0.1/" + strconv.Itoa(port) + "/img/poster/123/img.webp@400_"
+	if got := rr.Header().Get("Location"); got != want {
+		t.Fatalf("Location = %q, want %q", got, want)
+	}
+}
+
+func TestServeHTTPImageRedirectRegressionWithForwardedPrefixAndQuery(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/emby/Items/m01KMFN6SX7XMD3ZGZFRYWS5W9W/Images/Primary" {
+			t.Fatalf("path = %q, want %q", got, "/emby/Items/m01KMFN6SX7XMD3ZGZFRYWS5W9W/Images/Primary")
+		}
+		if got := r.URL.RawQuery; got != "maxWidth=400&tag=p01KMFN6SX7XMD3ZGZFRYWS5W9W&quality=90" {
+			t.Fatalf("query = %q, want %q", got, "maxWidth=400&tag=p01KMFN6SX7XMD3ZGZFRYWS5W9W&quality=90")
+		}
+		w.Header().Set("Location", "/img/poster/01KMFN6SX7XMD3ZGZFRYWS5W9W/img.webp@400_?v=1")
+		w.WriteHeader(http.StatusMovedPermanently)
+	}))
+	defer upstream.Close()
+
+	port := upstream.Listener.Addr().(*net.TCPAddr).Port
+	handler := newUnsafeTestProxyHandler()
+	req := newProxyRequest(http.MethodGet, "/http/127.0.0.1/"+strconv.Itoa(port)+"/emby/Items/m01KMFN6SX7XMD3ZGZFRYWS5W9W/Images/Primary?maxWidth=400&tag=p01KMFN6SX7XMD3ZGZFRYWS5W9W&quality=90")
+	req.Header.Set("X-Forwarded-Prefix", "/emby-proxy")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	assertResponseStatus(t, rr, http.StatusMovedPermanently)
+	want := "https://proxy.example.com/emby-proxy/http/127.0.0.1/" + strconv.Itoa(port) + "/img/poster/01KMFN6SX7XMD3ZGZFRYWS5W9W/img.webp@400_?v=1"
+	if got := rr.Header().Get("Location"); got != want {
+		t.Fatalf("Location = %q, want %q", got, want)
+	}
+}
+
+func TestServeHTTPContentLocationRelativePathRewritesToProxyPath(t *testing.T) {
+	rr, port := serveProxyRequest(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Location", "/img/backdrop/123/original.webp")
+		w.Header().Set("Content-Type", "image/webp")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("image-bytes"))
+	}, "/emby/Items/123/Images/Backdrop")
+
+	assertResponseStatus(t, rr, http.StatusOK)
+	want := "https://proxy.example.com/http/127.0.0.1/" + strconv.Itoa(port) + "/img/backdrop/123/original.webp"
+	if got := rr.Header().Get("Content-Location"); got != want {
+		t.Fatalf("Content-Location = %q, want %q", got, want)
 	}
 }
 

@@ -8,16 +8,46 @@ import (
 	"strings"
 )
 
-func rewriteResponseHeaders(resp *http.Response, baseURL string) {
+func rewriteResponseHeaders(resp *http.Response, t *target, baseURL string) {
 	// Some customized Emby backends return absolute upstream URLs in headers and
 	// response bodies. Those paths are hard-coded by the backend and cannot be
 	// fixed there, so the proxy must rewrite them back to proxy URLs here.
 	if loc := resp.Header.Get("Location"); loc != "" {
-		resp.Header.Set("Location", rewriteSingleURL(loc, baseURL))
+		resp.Header.Set("Location", rewriteHeaderURL(loc, t, baseURL))
 	}
 	if cl := resp.Header.Get("Content-Location"); cl != "" {
-		resp.Header.Set("Content-Location", rewriteSingleURL(cl, baseURL))
+		resp.Header.Set("Content-Location", rewriteHeaderURL(cl, t, baseURL))
 	}
+}
+
+func rewriteHeaderURL(rawURL string, t *target, baseURL string) string {
+	if strings.HasPrefix(rawURL, "https://") || strings.HasPrefix(rawURL, "http://") {
+		return rewriteSingleURL(rawURL, baseURL)
+	}
+	if strings.HasPrefix(rawURL, "//") {
+		return rawURL
+	}
+	if strings.HasPrefix(rawURL, "/") {
+		return buildProxyURL(baseURL, t, rawURL)
+	}
+	return rawURL
+}
+
+func buildProxyURL(baseURL string, t *target, path string) string {
+	var b strings.Builder
+	b.Grow(len(baseURL) + 1 + len(t.Scheme) + 1 + len(t.Domain) + 1 + 5 + len(path))
+	b.WriteString(baseURL)
+	b.WriteByte('/')
+	b.WriteString(t.Scheme)
+	b.WriteByte('/')
+	b.WriteString(t.Domain)
+	b.WriteByte('/')
+	b.WriteString(strconv.Itoa(t.Port))
+	if path == "" || path[0] != '/' {
+		b.WriteByte('/')
+	}
+	b.WriteString(path)
+	return b.String()
 }
 
 var rewritableTypes = []string{

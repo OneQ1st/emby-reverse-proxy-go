@@ -197,7 +197,7 @@ func (h *ProxyHandler) serveHTTPProxy(w http.ResponseWriter, r *http.Request, t 
 	}
 	defer resp.Body.Close()
 
-	rewriteResponseHeaders(resp, baseURL)
+	rewriteResponseHeaders(resp, t, baseURL)
 	copyResponseHeaders(w.Header(), resp.Header)
 
 	ct := resp.Header.Get("Content-Type")
