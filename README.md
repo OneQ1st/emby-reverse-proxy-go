@@ -42,6 +42,81 @@
 - 清理常见代理请求头：`X-Real-Ip`、`X-Forwarded-*`、`Forwarded`、`Via`
 - 移除响应头中的 `Server`、`X-Powered-By`
 - 支持媒体流透传、`Range` / `If-Range`、WebSocket
+- 支持通过标准环境变量为**上游 Emby 出站连接**配置代理：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`
+
+## 上游代理环境变量
+
+如果运行本项目的机器本身**不能直接访问 Emby 上游**，但能通过另一台机器、HTTP 代理或 SOCKS5 代理中转，那么可以给本服务配置标准代理环境变量。
+
+这些变量影响的是：
+
+- 本服务访问 **上游 Emby** 时的出站连接
+- 包括普通 HTTP/HTTPS 请求，以及 WebSocket 连接
+
+这些变量**不影响**：
+
+- 用户如何访问你的反代入口
+- 前置 Nginx / Caddy / NPM 到本服务 `:8080` 的这一跳
+
+### 支持的变量
+
+- `HTTP_PROXY` / `http_proxy`
+- `HTTPS_PROXY` / `https_proxy`
+- `ALL_PROXY` / `all_proxy`
+- `NO_PROXY` / `no_proxy`
+
+优先级：
+
+- 访问 `http` 上游时，优先看 `HTTP_PROXY`，没有再回退到 `ALL_PROXY`
+- 访问 `https` 上游时，优先看 `HTTPS_PROXY`，没有再回退到 `ALL_PROXY`
+- `NO_PROXY` 命中时直连，不走代理
+
+### 典型用法
+
+#### 1）HTTP/HTTPS 代理
+
+```bash
+HTTP_PROXY=http://127.0.0.1:7890 \
+HTTPS_PROXY=http://127.0.0.1:7890 \
+./emby-reverse-proxy-go
+```
+
+#### 2）统一走 SOCKS5
+
+```bash
+ALL_PROXY=socks5://127.0.0.1:1080 \
+./emby-reverse-proxy-go
+```
+
+#### 3）某些目标不走代理
+
+```bash
+ALL_PROXY=socks5://127.0.0.1:1080 \
+NO_PROXY=emby1.example.com,emby2.example.com \
+./emby-reverse-proxy-go
+```
+
+Docker Compose 示例：
+
+```yaml
+services:
+  emby-proxy:
+    image: ghcr.io/gsy-allen/emby-proxy-go:v1.2.5
+    environment:
+      LISTEN_ADDR: ':8080'
+      BLOCK_PRIVATE_TARGETS: 'true'
+      ALL_PROXY: 'socks5://127.0.0.1:1080'
+      NO_PROXY: 'emby1.example.com,emby2.example.com'
+```
+
+### 行为说明
+
+- `ALL_PROXY=socks5://...` 可用于把所有上游流量经 SOCKS5 隧道转发
+- `HTTP_PROXY` / `HTTPS_PROXY` 适合你已经有标准 HTTP 代理的场景
+- WebSocket 也会跟着同一套环境变量走，不是只对普通 API 请求生效
+- `https` 上游在经过 HTTP 代理时，会先建立 `CONNECT` 隧道，再进行 TLS 握手
+- 如果代理 URL 本身带用户名密码，HTTP 代理会自动带上 `Proxy-Authorization`
+
 
 ## 路径规则
 

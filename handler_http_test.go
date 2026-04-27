@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -48,6 +50,159 @@ func assertBodyContains(t *testing.T, body, want string) {
 	t.Helper()
 	if !strings.Contains(body, want) {
 		t.Fatalf("body missing %q in %q", want, body)
+	}
+}
+
+func withEnv(t *testing.T, key, value string) {
+	t.Helper()
+	oldValue, hadValue := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		t.Fatalf("Setenv(%q) error = %v", key, err)
+	}
+	t.Cleanup(func() {
+		var err error
+		if hadValue {
+			err = os.Setenv(key, oldValue)
+		} else {
+			err = os.Unsetenv(key)
+		}
+		if err != nil {
+			t.Fatalf("restore env %q error = %v", key, err)
+		}
+	})
+}
+
+func TestProxyFromEnvironmentUsesAllProxyForHTTP(t *testing.T) {
+	proxyURL, err := url.Parse("socks5://127.0.0.1:1080")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	withEnv(t, "ALL_PROXY", proxyURL.String())
+	t.Cleanup(func() { _ = os.Unsetenv("all_proxy") })
+
+	req, err := http.NewRequest(http.MethodGet, "http://upstream.example.com/library", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	got, err := transportProxyURL(req)
+	if err != nil {
+		t.Fatalf("transportProxyURL() error = %v", err)
+	}
+	if got == nil || got.String() != proxyURL.String() {
+		t.Fatalf("transportProxyURL() = %v, want %s", got, proxyURL.String())
+	}
+}
+
+func TestProxyFromEnvironmentUsesNoProxyBypass(t *testing.T) {
+	withEnv(t, "HTTP_PROXY", "http://127.0.0.1:8888")
+	withEnv(t, "NO_PROXY", "upstream.example.com")
+	t.Cleanup(func() { _ = os.Unsetenv("http_proxy") })
+	t.Cleanup(func() { _ = os.Unsetenv("no_proxy") })
+
+	req, err := http.NewRequest(http.MethodGet, "http://upstream.example.com/library", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	got, err := transportProxyURL(req)
+	if err != nil {
+		t.Fatalf("transportProxyURL() error = %v", err)
+	}
+	if got != nil {
+		t.Fatalf("transportProxyURL() = %v, want nil", got)
+	}
+}
+
+func TestServeHTTPUsesConfiguredTransportProxy(t *testing.T) {
+	proxyHits := make(chan string, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits <- r.URL.String()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer proxyServer.Close()
+
+	proxyTarget, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("Parse(proxyServer.URL) error = %v", err)
+	}
+	withEnv(t, "HTTP_PROXY", proxyTarget.String())
+	withEnv(t, "NO_PROXY", "")
+	t.Cleanup(func() { _ = os.Unsetenv("http_proxy") })
+	t.Cleanup(func() { _ = os.Unsetenv("no_proxy") })
+
+	handler := NewProxyHandler(true)
+	handler.allowUnsafeDNS = true
+	handler.client.Transport.(*http.Transport).DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr != proxyTarget.Host {
+			t.Fatalf("dial addr = %q, want proxy %q", addr, proxyTarget.Host)
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, proxyTarget.Host)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/http/upstream.example.com/80/custom/site.css", nil)
+	req.Host = "proxy.example.com"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	assertResponseStatus(t, rr, http.StatusOK)
+	if got := strings.TrimSpace(rr.Body.String()); got != `{"ok":true}` {
+		t.Fatalf("body = %q, want %q", got, `{"ok":true}`)
+	}
+	select {
+	case got := <-proxyHits:
+		if !strings.Contains(got, "/custom/site.css") {
+			t.Fatalf("proxy URL = %q, want /custom/site.css", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected transport proxy to receive request")
+	}
+}
+
+func TestServeHTTPNoProxyBypassesConfiguredTransportProxy(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("upstream-ok"))
+	}))
+	defer upstream.Close()
+
+	proxyHits := make(chan string, 1)
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits <- r.URL.String()
+		http.Error(w, "proxy should not be used", http.StatusBadGateway)
+	}))
+	defer proxyServer.Close()
+
+	proxyTarget, err := url.Parse(proxyServer.URL)
+	if err != nil {
+		t.Fatalf("Parse(proxyServer.URL) error = %v", err)
+	}
+	withEnv(t, "HTTP_PROXY", proxyTarget.String())
+	withEnv(t, "NO_PROXY", "upstream.example.com")
+	t.Cleanup(func() { _ = os.Unsetenv("http_proxy") })
+	t.Cleanup(func() { _ = os.Unsetenv("no_proxy") })
+
+	handler := NewProxyHandler(true)
+	handler.allowUnsafeDNS = true
+	handler.client.Transport.(*http.Transport).DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr != proxyTarget.Host {
+			return (&net.Dialer{}).DialContext(ctx, network, upstream.Listener.Addr().String())
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, proxyTarget.Host)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/http/upstream.example.com/80/Items", nil)
+	req.Host = "proxy.example.com"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	assertResponseStatus(t, rr, http.StatusOK)
+	select {
+	case got := <-proxyHits:
+		t.Fatalf("proxy unexpectedly received request %q", got)
+	case <-time.After(300 * time.Millisecond):
 	}
 }
 
