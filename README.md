@@ -101,7 +101,7 @@ Docker Compose 示例：
 ```yaml
 services:
   emby-proxy:
-    image: ghcr.io/gsy-allen/emby-proxy-go:v1.2.5
+    image: ghcr.io/gsy-allen/emby-proxy-go:v1.3
     environment:
       LISTEN_ADDR: ':8080'
       BLOCK_PRIVATE_TARGETS: 'true'
@@ -600,10 +600,13 @@ curl -i "https://proxy.example.com/http/public-emby.example.net/8096/"
 ├── handler.go                        # HTTP 主流程编排与响应处理
 ├── handler_http_test.go              # 通用 HTTP 代理测试
 ├── handler_http_emby_rewrite_test.go # Emby URL 改写回归测试
+├── handler_ws_test.go                # websocket 代理测试
 ├── headers.go                        # 请求/响应头规则与辅助函数
 ├── target.go                         # 代理路径解析与 target 语义
+├── target_test.go                    # target 语义测试
 ├── websocket.go                      # WebSocket 透传逻辑
 ├── rewriter.go                       # 响应改写：URL 替换、Header 改写
+├── rewriter_test.go                  # 针对响应改写的测试
 ├── Dockerfile                        # 多阶段构建镜像
 └── docker-compose.yml                # NPM、数据库和代理服务的一体化 Compose 部署方案
 ```
