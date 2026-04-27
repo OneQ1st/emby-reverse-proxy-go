@@ -37,12 +37,14 @@ type ProxyHandler struct {
 	client         *http.Client
 	resolver       *net.Resolver
 	allowUnsafeDNS bool
+	dialContextFn  func(context.Context, string, string) (net.Conn, error)
 }
 
 const upstreamDialTimeout = 30 * time.Second
 const upstreamKeepAlive = 60 * time.Second
 
 type resolvedTargetContextKey struct{}
+type targetDialAddressContextKey struct{}
 
 func parseBlockPrivateTargets(raw string) bool {
 	if raw == "" {
@@ -60,12 +62,14 @@ func parseBlockPrivateTargets(raw string) bool {
 
 func NewProxyHandler(blockPrivateTargets bool) *ProxyHandler {
 	h := &ProxyHandler{resolver: net.DefaultResolver, allowUnsafeDNS: !blockPrivateTargets}
+	h.dialContextFn = h.dialContext
 	transport := &http.Transport{
 		MaxIdleConns:          200,
 		MaxIdleConnsPerHost:   20,
 		MaxConnsPerHost:       50,
 		IdleConnTimeout:       120 * time.Second,
 		TLSClientConfig:       &tls.Config{},
+		Proxy:                 transportProxyURL,
 		DialContext:           h.dialContext,
 		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 300 * time.Second,
@@ -159,6 +163,9 @@ func (h *ProxyHandler) dialContext(ctx context.Context, network, addr string) (n
 	if h.allowUnsafeDNS {
 		return dialer.DialContext(ctx, network, addr)
 	}
+	if targetAddr, ok := ctx.Value(targetDialAddressContextKey{}).(string); ok && targetAddr != "" && targetAddr != addr {
+		return dialer.DialContext(ctx, network, addr)
+	}
 	rt, err := resolvedTargetFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -177,6 +184,7 @@ func (h *ProxyHandler) serveHTTPProxy(w http.ResponseWriter, r *http.Request, t 
 	}
 
 	copyRequestHeaders(outReq.Header, r.Header, false)
+	outReq = outReq.WithContext(context.WithValue(outReq.Context(), targetDialAddressContextKey{}, targetHostPort(t)))
 	if rng := r.Header.Get("Range"); rng != "" {
 		outReq.Header.Set("Range", rng)
 	}

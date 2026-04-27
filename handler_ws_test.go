@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +121,168 @@ func TestWriteWebSocketRequestUsesSingleBracketIPv6Host(t *testing.T) {
 
 	if upstreamReq.Host != "[2001:db8::1]:8096" {
 		t.Fatalf("Host = %q, want %q", upstreamReq.Host, "[2001:db8::1]:8096")
+	}
+}
+
+func TestProxyURLForTargetUsesAllProxy(t *testing.T) {
+	proxyURL, err := url.Parse("http://proxy.example.com:18080")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	withEnv(t, "ALL_PROXY", proxyURL.String())
+	t.Cleanup(func() { _ = os.Unsetenv("all_proxy") })
+
+	got, err := proxyURLForTarget(&target{Scheme: "http", Domain: "upstream.example.com", Port: 80, Path: "socket"})
+	if err != nil {
+		t.Fatalf("proxyURLForTarget() error = %v", err)
+	}
+	if got == nil || got.String() != proxyURL.String() {
+		t.Fatalf("proxyURLForTarget() = %v, want %s", got, proxyURL.String())
+	}
+}
+
+func TestProxyURLForTargetRespectsNoProxy(t *testing.T) {
+	withEnv(t, "ALL_PROXY", "http://127.0.0.1:18888")
+	withEnv(t, "NO_PROXY", "upstream.example.com")
+	t.Cleanup(func() { _ = os.Unsetenv("all_proxy") })
+	t.Cleanup(func() { _ = os.Unsetenv("no_proxy") })
+
+	got, err := proxyURLForTarget(&target{Scheme: "http", Domain: "upstream.example.com", Port: 80, Path: "socket"})
+	if err != nil {
+		t.Fatalf("proxyURLForTarget() error = %v", err)
+	}
+	if got != nil {
+		t.Fatalf("proxyURLForTarget() = %v, want nil", got)
+	}
+}
+
+func TestDialTargetConnUsesHTTPProxyForWebSocket(t *testing.T) {
+	proxyConn, upstreamConn := net.Pipe()
+	defer proxyConn.Close()
+
+	handler := NewProxyHandler(true)
+	handler.allowUnsafeDNS = true
+
+	proxyAddrCh := make(chan string, 1)
+	handler.dialContextFn = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		proxyAddrCh <- addr
+		return proxyConn, nil
+	}
+
+	proxyURL, err := url.Parse("http://proxy.example.com:18080")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	withEnv(t, "ALL_PROXY", proxyURL.String())
+	t.Cleanup(func() { _ = os.Unsetenv("all_proxy") })
+
+	resultCh := make(chan error, 1)
+	go func() {
+		conn, err := handler.dialTargetConn(context.Background(), &target{Scheme: "http", Domain: "upstream.example.com", Port: 80, Path: "socket"}, nil)
+		if err == nil {
+			conn.Close()
+		}
+		resultCh <- err
+	}()
+
+	select {
+	case got := <-proxyAddrCh:
+		if got != "proxy.example.com:18080" {
+			t.Fatalf("dialed proxy addr = %q, want %q", got, "proxy.example.com:18080")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected websocket dial to use configured proxy")
+	}
+
+	select {
+	case err := <-resultCh:
+		if err != nil {
+			t.Fatalf("dialTargetConn() error = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("websocket proxy dial should complete")
+	}
+	_ = upstreamConn.Close()
+}
+
+func TestDialTargetConnUsesSOCKS5ProxyForWebSocket(t *testing.T) {
+	proxyConn, serverConn := net.Pipe()
+	defer proxyConn.Close()
+
+	handler := NewProxyHandler(true)
+	handler.allowUnsafeDNS = true
+	handler.dialContextFn = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr != "proxy.example.com:1080" {
+			t.Fatalf("dialed proxy addr = %q, want %q", addr, "proxy.example.com:1080")
+		}
+		return proxyConn, nil
+	}
+
+	withEnv(t, "ALL_PROXY", "socks5://proxy.example.com")
+	t.Cleanup(func() { _ = os.Unsetenv("all_proxy") })
+
+	serverDone := make(chan error, 1)
+	go func() {
+		defer serverConn.Close()
+		buf := make([]byte, 3)
+		if _, err := io.ReadFull(serverConn, buf); err != nil {
+			serverDone <- err
+			return
+		}
+		if !bytes.Equal(buf, []byte{0x05, 0x01, 0x00}) {
+			serverDone <- fmt.Errorf("unexpected socks greeting %v", buf)
+			return
+		}
+		if _, err := serverConn.Write([]byte{0x05, 0x00}); err != nil {
+			serverDone <- err
+			return
+		}
+		header := make([]byte, 4)
+		if _, err := io.ReadFull(serverConn, header); err != nil {
+			serverDone <- err
+			return
+		}
+		if !bytes.Equal(header, []byte{0x05, 0x01, 0x00, 0x03}) {
+			serverDone <- fmt.Errorf("unexpected socks connect header %v", header)
+			return
+		}
+		length := make([]byte, 1)
+		if _, err := io.ReadFull(serverConn, length); err != nil {
+			serverDone <- err
+			return
+		}
+		host := make([]byte, int(length[0]))
+		if _, err := io.ReadFull(serverConn, host); err != nil {
+			serverDone <- err
+			return
+		}
+		if string(host) != "upstream.example.com" {
+			serverDone <- fmt.Errorf("unexpected socks host %q", string(host))
+			return
+		}
+		port := make([]byte, 2)
+		if _, err := io.ReadFull(serverConn, port); err != nil {
+			serverDone <- err
+			return
+		}
+		if port[0] != 0x00 || port[1] != 0x50 {
+			serverDone <- fmt.Errorf("unexpected socks port %v", port)
+			return
+		}
+		if _, err := serverConn.Write([]byte{0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x1F, 0x90}); err != nil {
+			serverDone <- err
+			return
+		}
+		serverDone <- nil
+	}()
+
+	conn, err := handler.dialTargetConn(context.Background(), &target{Scheme: "http", Domain: "upstream.example.com", Port: 80, Path: "socket"}, nil)
+	if err != nil {
+		t.Fatalf("dialTargetConn() error = %v", err)
+	}
+	conn.Close()
+	if err := <-serverDone; err != nil {
+		t.Fatalf("socks proxy error = %v", err)
 	}
 }
 

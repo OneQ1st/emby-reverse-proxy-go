@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -159,6 +160,65 @@ func stripForwardedPrefix(path, forwardedPrefix string) string {
 
 func isDefaultPort(scheme string, port int) bool {
 	return (scheme == "https" && port == 443) || (scheme == "http" && port == 80)
+}
+
+func transportProxyURL(req *http.Request) (*url.URL, error) {
+	if req == nil || req.URL == nil {
+		return nil, nil
+	}
+	targetURL := req.URL
+	host := normalizeTargetHost(targetURL.Hostname())
+	if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return nil, nil
+	}
+	if shouldBypassProxy(host, firstEnvValue("NO_PROXY", "no_proxy")) {
+		return nil, nil
+	}
+	proxyValue := proxyEnvValueForScheme(targetURL.Scheme)
+	if proxyValue == "" {
+		return nil, nil
+	}
+	return url.Parse(proxyValue)
+}
+
+func proxyEnvValueForScheme(scheme string) string {
+	switch strings.ToLower(scheme) {
+	case "https", "wss":
+		if value := firstEnvValue("HTTPS_PROXY", "https_proxy"); value != "" {
+			return value
+		}
+	case "http", "ws":
+		if value := firstEnvValue("HTTP_PROXY", "http_proxy"); value != "" {
+			return value
+		}
+	}
+	return firstEnvValue("ALL_PROXY", "all_proxy")
+}
+
+func shouldBypassProxy(host, noProxy string) bool {
+	host = normalizeTargetHost(host)
+	if host == "" || noProxy == "" {
+		return false
+	}
+	for _, rawPart := range strings.Split(noProxy, ",") {
+		part := normalizeTargetHost(strings.TrimSpace(rawPart))
+		if part == "" {
+			continue
+		}
+		if part == "*" || host == part || strings.HasSuffix(host, "."+part) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstEnvValue(keys ...string) string {
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok && value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func firstHeaderValue(raw string) string {
