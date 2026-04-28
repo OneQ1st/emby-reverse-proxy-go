@@ -2,123 +2,121 @@
 
 > **警告：不要把这个项目用于禁止反代的服务器，否则后果自负。**
 
-一个给 Emby 用的轻量反向代理。它通过路径编码上游协议、域名、端口和目标路径，代理 Emby 页面/API、媒体流和 WebSocket 请求。
+一个给 Emby 用的轻量反向代理。
 
-这个项目除了适配通用 Emby，还兼容一个二次开发的 Emby 后端。那个后端会在响应头和文本响应体里返回硬编码的上游绝对 URL，这部分没法在后端修，所以代理会在响应阶段把它们改写回代理 URL。
+它把上游地址编码进路径里，通过固定格式代理 Emby 页面、API、媒体流和 WebSocket：
 
-看不懂移步[小白步骤流程](README-b.md)
+```text
+/{scheme}/{domain}/{port}/{path}
+```
 
-## 30 秒看懂
+这个项目是 **Emby 专用**，不是通用网站反代。
 
-- 这是 **Emby 专用反代**，不是通用网站反代
-- 对外入口应该是 HTTPS；本服务本身只监听内部 HTTP（默认 `:8080`）
-- 前置层要正确转发 `X-Forwarded-Proto`、`X-Forwarded-Host` 和 WebSocket 升级头
-- 访问格式固定为 `/{scheme}/{domain}/{port}/{path}`
-- 如果 Emby 主站返回了指向其他推流/分流节点的绝对 URL，代理会把它重新编码回当前代理路径
+看不懂可移步 [小白步骤流程](README-b.md)。
 
-## 适合什么场景
+## 适用场景
 
-### 最小运行前提
+适合下面这类情况：
 
-在真正开始部署前，至少要满足这几件事：
+- 你想把多个 Emby 入口统一收口到一个域名下
+- 你前面已经有 Nginx Proxy Manager、Caddy、Traefik、Nginx 等负责 HTTPS
+- 你需要一个尽量简单、可直接部署的 Emby 反代
 
-- 你已经有一个 Emby 上游可以访问
-- 你前面有一层负责 HTTPS 的反向代理，或者准备自己提供 HTTPS 入口
-- 前置层能正确传递 `X-Forwarded-Proto`、`X-Forwarded-Host`
-- 如果你要用 Emby 的实时能力，前置层还必须正确透传 WebSocket 升级头
+## 核心行为
 
-满足这几点，这个代理才会按 README 里的方式工作。
+当前代码实际提供的能力：
 
-- 你想把多个 Emby 入口统一收口到一个反代域名下
-- 你前面已经有 Nginx Proxy Manager、Caddy、Traefik、Nginx 或其他能做 HTTPS 终止的反向代理
-- 你只想要一个能跑、好排错、不折腾配置的工具
-
-## 核心能力
-
-- 支持 `/{scheme}/{domain}/{port}/{path}` 格式代理 Emby 上游实例
-- 改写 `Location`、`Content-Location`
-- 改写 Emby 页面/API 文本响应里的绝对 URL，让主站返回的推流/分流地址也重新走代理
+- 代理 `/{scheme}/{domain}/{port}/{path}` 格式的 Emby 上游请求
+- 支持 HTTP、HTTPS、媒体流、`Range` / `If-Range`、WebSocket
+- 改写响应头里的 `Location`、`Content-Location`
 - 还原代理后的 `Referer`、`Origin`
 - 清理常见代理请求头：`X-Real-Ip`、`X-Forwarded-*`、`Forwarded`、`Via`
 - 移除响应头中的 `Server`、`X-Powered-By`
-- 支持媒体流透传、`Range` / `If-Range`、WebSocket
-- 支持通过标准环境变量为**上游 Emby 出站连接**配置代理：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`
+- 支持通过标准环境变量为访问上游 Emby 的出站连接配置代理：`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY`
 
-## 上游代理环境变量
+另外，代理会对 **部分 Emby 文本接口** 做响应体里的绝对 URL 改写，当前主要覆盖：
 
-如果运行本项目的机器本身**不能直接访问 Emby 上游**，但能通过另一台机器、HTTP 代理或 SOCKS5 代理中转，那么可以给本服务配置标准代理环境变量。
+- `.../Items/.../PlaybackInfo`
+- `.../Sessions/Playing/Progress`
 
-这些变量影响的是：
+这部分是为了兼容某些 Emby 后端返回硬编码绝对 URL 的情况。不要把它理解成“所有页面和 API 响应都会改写”。
 
-- 本服务访问 **上游 Emby** 时的出站连接
-- 包括普通 HTTP/HTTPS 请求，以及 WebSocket 连接
+## 运行前提
 
-这些变量**不影响**：
+至少满足这几点：
 
-- 用户如何访问你的反代入口
-- 前置 Nginx / Caddy / NPM 到本服务 `:8080` 的这一跳
+- 你已经有一个可访问的 Emby 上游
+- 对外入口由前置反代提供 HTTPS
+- 前置反代能正确传递 `X-Forwarded-Proto`、`X-Forwarded-Host`
+- 如果要用实时能力，还要正确透传 WebSocket 升级头
 
-### 支持的变量
+本服务默认只监听内部 HTTP：`:8080`。
 
-- `HTTP_PROXY` / `http_proxy`
-- `HTTPS_PROXY` / `https_proxy`
-- `ALL_PROXY` / `all_proxy`
-- `NO_PROXY` / `no_proxy`
+## 快速开始
 
-优先级：
+### 1. 直接使用仓库自带的 Compose
 
-- 访问 `http` 上游时，优先看 `HTTP_PROXY`，没有再回退到 `ALL_PROXY`
-- 访问 `https` 上游时，优先看 `HTTPS_PROXY`，没有再回退到 `ALL_PROXY`
-- `NO_PROXY` 命中时直连，不走代理
+仓库里的 `docker-compose.yml` 会一起启动：
 
-### 典型用法
+- `app`：Nginx Proxy Manager
+- `db`：MariaDB
+- `emby-proxy`：本项目代理服务
 
-#### 1）HTTP/HTTPS 代理
+第一次启动前，先改掉 `docker-compose.yml` 里的数据库用户名和密码，不要直接用示例值。
 
-```bash
-HTTP_PROXY=http://127.0.0.1:7890 \
-HTTPS_PROXY=http://127.0.0.1:7890 \
-./emby-reverse-proxy-go
-```
-
-#### 2）统一走 SOCKS5
+启动：
 
 ```bash
-ALL_PROXY=socks5://127.0.0.1:1080 \
-./emby-reverse-proxy-go
+docker compose up -d
 ```
 
-#### 3）某些目标不走代理
+默认情况下：
 
-```bash
-ALL_PROXY=socks5://127.0.0.1:1080 \
-NO_PROXY=emby1.example.com,emby2.example.com \
-./emby-reverse-proxy-go
+- NPM 后台：`http://<宿主机IP>:81`
+- 公共入口：`80` / `443`
+- `emby-proxy` 仅在内部网络监听 `:8080`
+
+### 2. 前置代理转发到 `emby-proxy:8080`
+
+如果你用的不是 Nginx Proxy Manager，也一样。核心要求只有这几个：
+
+- 对外提供 HTTPS
+- 把请求转发到 `emby-proxy:8080`
+- 透传 `X-Forwarded-Proto`、`X-Forwarded-Host`
+- 透传 WebSocket 升级头
+
+最小 Nginx 示例：
+
+```nginx
+location / {
+    proxy_pass http://emby-proxy:8080;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $http_host;
+
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_max_temp_file_size 0;
+
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
 ```
 
-Docker Compose 示例：
+如果你的公网入口不是 443，而是 8443 这类自定义端口，建议同时透传：
 
-```yaml
-services:
-  emby-proxy:
-    image: ghcr.io/gsy-allen/emby-proxy-go:v1.3
-    environment:
-      LISTEN_ADDR: ':8080'
-      BLOCK_PRIVATE_TARGETS: 'true'
-      ALL_PROXY: 'socks5://127.0.0.1:1080'
-      NO_PROXY: 'emby1.example.com,emby2.example.com'
+```nginx
+proxy_set_header X-Forwarded-Port $server_port;
 ```
 
-### 行为说明
+如果你想在前面再套一层固定前缀，例如 `/custom/`，可以加：
 
-- `ALL_PROXY=socks5://...` 可用于把所有上游流量经 SOCKS5 隧道转发
-- `HTTP_PROXY` / `HTTPS_PROXY` 适合你已经有标准 HTTP 代理的场景
-- WebSocket 也会跟着同一套环境变量走，不是只对普通 API 请求生效
-- `https` 上游在经过 HTTP 代理时，会先建立 `CONNECT` 隧道，再进行 TLS 握手
-- 如果代理 URL 本身带用户名密码，HTTP 代理会自动带上 `Proxy-Authorization`
+```nginx
+proxy_set_header X-Forwarded-Prefix /custom;
+```
 
-
-## 路径规则
+## 访问规则
 
 唯一合法格式：
 
@@ -131,12 +129,11 @@ services:
 - `scheme` 只能是 `http` 或 `https`
 - `domain` 必填
 - `port` 必填，范围 `1-65535`
-- 即使是 `80` 或 `443` 也不能省略 `port`
+- 即使是 `80` 或 `443` 也不能省略
 - `path` 可为空；为空时实际请求上游 `/`
 - 查询参数会原样透传
 - 根路径 `/` 会返回 `400 Bad Request`
 - 健康检查固定为 `/health`
-- 目标地址会做安全限制：拒绝本机、Docker 宿主机名、私网、链路本地地址和未指定地址
 
 示例：
 
@@ -146,330 +143,84 @@ services:
 /http/public-emby.example.net/8096/emby/Items?api_key=xxxx
 ```
 
-错误示例：
+## 安全限制
 
-```text
-/https/emby.example.com/web/index.html   # 缺少 port
-/                                         # 根路径不是首页
-```
+默认情况下，代理会拒绝一些危险目标，以免被当成跳板：
 
-### 一个最值钱的改写例子
+- `localhost`
+- `host.docker.internal`
+- 私网地址
+- 链路本地地址
+- 未指定地址
 
-假设 Emby 主站返回了一个真实推流地址：
+对应环境变量：
 
-```text
-https://stream.example.com/Videos/123/master.m3u8?MediaSourceId=abc
-```
+- `BLOCK_PRIVATE_TARGETS=true`：默认值，拒绝这类目标
+- `BLOCK_PRIVATE_TARGETS=false`：允许访问内网 Emby，但风险更大
 
-客户端最终看到的会是：
+如果你的真实上游 Emby 就在家庭或办公内网，才考虑关掉它。
 
-```text
-https://proxy.example.com/https/stream.example.com/443/Videos/123/master.m3u8?MediaSourceId=abc
-```
+## 上游代理环境变量
 
-也就是说，就算主站把播放地址指向了另一个推流/分流节点，代理也会把它重新编码回当前代理入口。
+如果运行本项目的机器不能直连上游 Emby，可以设置标准代理环境变量：
 
-## 快速开始
+- `HTTP_PROXY` / `http_proxy`
+- `HTTPS_PROXY` / `https_proxy`
+- `ALL_PROXY` / `all_proxy`
+- `NO_PROXY` / `no_proxy`
 
-### 1. 准备 `docker-compose.yml`
+这些变量影响的是：
 
-下面的 compose 示例使用 **Nginx Proxy Manager**，因为它对大多数人最省事。但它只是示例，不是硬依赖。
+- 本服务访问上游 Emby 时的出站连接
+- 包括普通 HTTP/HTTPS 请求和 WebSocket
 
-只要你的前置层能做到下面几件事，就可以替代 NPM：
+不影响：
 
-- 对外提供 `443`
-- 配置证书并强制 HTTPS
-- 把请求转发到本项目的 `:8080`
-- 正确透传 `X-Forwarded-Proto`、`X-Forwarded-Host`
-- 正确透传 WebSocket 升级头
+- 用户如何访问你的反代入口
+- 前置反代到本服务 `:8080` 的这一跳
 
-**不需要下载整个仓库。** 对大多数用户来说，只需要单独下载仓库里的 `docker-compose.yml` 文件，放到一个你准备用来部署的目录里就够了。
+推荐优先直接写在 Compose 里。
 
-如果你只是想直接部署现成镜像，`docker-compose.yml` 就是必需品；源码、测试文件和 `Dockerfile` 都不是启动代理服务的前提。
-
-### 2. 启动前先改数据库配置
-
-在第一次执行 `docker compose up -d` 之前，先打开 `docker-compose.yml`，把数据库相关配置改掉，**不要直接使用示例里的默认用户名和密码**。
-
-至少改这几项，并保持两边一致：
+统一走 SOCKS5：
 
 ```yaml
 services:
-  app:
+  emby-proxy:
+    image: ghcr.io/gsy-allen/emby-proxy-go:v1.3
     environment:
-      DB_MYSQL_USER: '改成你自己的用户名'
-      DB_MYSQL_PASSWORD: '改成强密码'
-      DB_MYSQL_NAME: '改成你自己的数据库名'
-
-  db:
-    environment:
-      MYSQL_ROOT_PASSWORD: '改成强密码'
-      MYSQL_DATABASE: '改成和上面一致的数据库名'
-      MYSQL_USER: '改成和上面一致的用户名'
-      MYSQL_PASSWORD: '改成和上面一致的强密码'
+      LISTEN_ADDR: ':8080'
+      BLOCK_PRIVATE_TARGETS: 'true'
+      ALL_PROXY: 'socks5://username:password@VPS2:1080'
+      NO_PROXY: 'emby1.example.com,emby2.example.com'
 ```
 
-注意：
+走 HTTP/HTTPS 代理：
 
-- `app` 里的 `DB_MYSQL_*` 要和 `db` 里的 `MYSQL_*` 对应上
-- 不要只改一边，不然 Nginx Proxy Manager 连不上数据库
-- 这是有状态服务，**上线后不要随手只改环境变量不处理现有数据卷**，否则很容易把现有部署搞坏
-- 简单说：**首次部署前改最省事，跑起来以后再改最麻烦**
+```yaml
+services:
+  emby-proxy:
+    image: ghcr.io/gsy-allen/emby-proxy-go:v1.3
+    environment:
+      LISTEN_ADDR: ':8080'
+      BLOCK_PRIVATE_TARGETS: 'true'
+      HTTP_PROXY: 'http://127.0.0.1:7890'
+      HTTPS_PROXY: 'http://127.0.0.1:7890'
+```
 
-这样做不是形式主义，而是为了避免把过于弱的默认凭据直接带进长期运行环境。
-
-### 3. 启动
-
-仓库自带的 `docker-compose.yml` 会一起启动：
-
-- `app`：Nginx Proxy Manager
-- `db`：MariaDB
-- `emby-proxy`：本项目代理服务
-
-启动：
+临时命令行启动也可以：
 
 ```bash
-docker compose up -d
+ALL_PROXY=socks5://127.0.0.1:1080 ./emby-proxy
 ```
 
-默认行为：
-
-- NPM 后台：`http://<宿主机IP>:81`
-- 公共入口：`80` / `443`
-- `emby-proxy` 只在 compose 内部网络暴露 `:8080`，不直接对公网提供给用户访问
-- 数据目录：`./data`、`./letsencrypt`、`./mysql`
-
-### 4. 在 Nginx Proxy Manager 里配置上游（示例）
-
-Proxy Host 推荐配置：
-
-- **Scheme**: `http`
-- **Forward Hostname / IP**: `emby-proxy`
-- **Forward Port**: `8080`
-
-推荐按钮状态：
-
-- **WebSocket Support**: 开
-- **Cache Assets**: 关
-- **Block Common Exploits**: 建议先关
-
-`Custom Nginx Configuration` 填写：
-
-1) 使用默认443端口
-
-```nginx
-proxy_buffering off;
-proxy_request_buffering off;
-proxy_max_temp_file_size 0;
+```bash
+HTTP_PROXY=http://127.0.0.1:7890 HTTPS_PROXY=http://127.0.0.1:7890 ./emby-proxy
 ```
 
-2) 使用了其他端口，如8443等，则需要写全，否则读取不到端口信息
+## 环境变量
 
-```nginx
-location / {
-    proxy_pass http://emby-proxy:8080;
-
-    # 同443端口配置
-    proxy_buffering off;
-    proxy_request_buffering off;
-    proxy_max_temp_file_size 0;
-
-    # 必须传递域名信息，否则无法识别端口
-    proxy_set_header Host $http_host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-Host $http_host;
-    proxy_set_header X-Forwarded-Port $server_port;
-    
-    # websocket支持
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-}
-```
-
-3) 若你想使用自定义的字符串作为入口，以加强服务安全，可以使用以下配置：
-
-```nginx
-# 只允许携带正确随机路径的请求通过
-location / {
-    # 拒绝直接访问根路径，返回 404 伪装成不存在
-    return 404;
-}
-
-# 添加自定义字符串路径，下面的 /custom/ 只是示例，实际可替换成你自己的前缀
-location /custom/ {
-    # 去掉前缀后，转发到后端服务
-    proxy_pass http://emby-proxy:8080/;
-    proxy_set_header Host $http_host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-Host $http_host;
-    # 必须添加 X-Forwarded-Prefix，服务通过读取该值进行路径适配
-    proxy_set_header X-Forwarded-Prefix /custom;
-
-    # 原本需要填写的三项
-    proxy_buffering off;
-    proxy_request_buffering off;
-    proxy_max_temp_file_size 0;
-
-    # websocket支持
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-}
-```
-
-如果你不用 NPM，也一样：核心要求不是“必须是 NPM”，而是**前置层必须负责 HTTPS**，并把请求按原始 Host/Proto 正确转发到 `emby-proxy:8080`。
-
-如果前置代理没有正确传递 `X-Forwarded-Proto` 和 `X-Forwarded-Host`，响应里改写出来的 URL 会不对。
-
-## HTTPS 和公网暴露
-
-这个代理进程本身只监听内部明文 HTTP（默认 `:8080`），不自己做 TLS 终止。
-
-这意味着：
-
-- `emby-proxy:8080` 设计上应只在 Docker 内部网络、同机反代或其他受控内网里使用
-- 只要 `:8080` 没有直接暴露到公网，用户通常也不会直接访问它
-- 真正对外给用户访问的入口，应该由前置反代提供 `443` 和 HTTPS
-- 如果客户端到公网入口这一段仍然是明文 HTTP，Emby 的登录账号、密码、cookie、token、API key 都可能在链路上被窃听
-- Docker 内部网络或同机反代到 `:8080` 的这一跳通常可以继续用 HTTP
-
-一句话：**不是必须暴露 `:8080`，而是必须给公网入口提供 HTTPS。**
-
-## 访问示例
-
-假设外部代理域名是 `https://proxy.example.com`：
-
-- Emby HTTPS 首页：`https://proxy.example.com/https/emby.example.com/443/`
-- Emby HTTP 首页：`https://proxy.example.com/http/public-emby.example.net/8096/`
-- API 请求：`https://proxy.example.com/http/public-emby.example.net/8096/emby/Items?api_key=xxxx`
-- Web 页面：`https://proxy.example.com/http/public-emby.example.net/8096/web/index.html`
-
-## 目标地址安全限制
-
-为了减少公网暴露时被滥用成跳板代理的风险，代理**默认**会拒绝以下目标：
-
-- 主机名：`localhost`、`host.docker.internal`
-- IPv4：`127.0.0.0/8`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`、`0.0.0.0`
-- IPv6：`::1`、`fc00::/7`、`fe80::/10`、`::`
-
-另外，域名不是只看字符串。代理会先做 DNS 解析；只要解析结果里有任意一个 IP 落在上面的范围内，请求就会直接返回 `400 Bad Request`。
-
-这意味着：
-
-- 默认配置下，仍然支持代理公网可达的 Emby
-- 默认配置下，**不支持** 代理 `192.168.x.x`、`10.x.x.x`、`172.16-31.x.x` 这类内网 Emby
-- 如果你本来就是拿它代理家庭局域网 Emby，可以把环境变量 `BLOCK_PRIVATE_TARGETS=false` 关掉，恢复对私网目标的访问；但这样安全风险会明显增大
-
-### 什么时候保持 `BLOCK_PRIVATE_TARGETS=true`
-
-下面这些情况，建议保持默认值 `true`：
-
-- 你的代理入口暴露在公网
-- 你不确定是否所有访问者都可信
-- 你的真实需求只是代理公网可达的 Emby
-- 你更在意减少 SSRF / 内网探测 / 跳板滥用风险
-
-一句话：**只要你没有非常明确的理由，就保持 `true`。**
-
-### 什么时候才适合改成 `BLOCK_PRIVATE_TARGETS=false`
-
-只有在下面这类场景，才值得改成 `false`：
-
-- 你的真实上游 Emby 就在家庭或办公内网里，比如 `192.168.x.x`、`10.x.x.x`
-- 你明确知道代理需要访问这些私网地址
-- 你已经接受这样做会扩大被滥用时的风险面
-- 你的公网入口还有额外访问控制，比如 VPN、白名单、Zero Trust、认证或其他前置保护
-
-一句话：**`false` 不是常规默认值，而是为了兼容“公网入口 + 内网 Emby 后端”这类真实场景而保留的显式选项。**
-
-## 改写规则
-
-### 请求侧
-
-会清理这些代理相关请求头：
-
-- `X-Real-Ip`
-- `X-Forwarded-For`
-- `X-Forwarded-Proto`
-- `X-Forwarded-Host`
-- `X-Forwarded-Port`
-- `Forwarded`
-- `Via`
-
-另外：
-
-- 代理后的 `Referer`、`Origin` 会被还原成真实上游 URL
-- 发往上游时会把 `Host` 设为目标主机和端口
-- 非媒体请求会主动发 `Accept-Encoding: identity`
-
-### 响应侧
-
-会处理这些内容：
-
-- 改写 `Location`
-- 改写 `Content-Location`
-- 改写 Emby 文本响应里的绝对 URL
-- 移除 `Server`
-- 移除 `X-Powered-By`
-
-响应体改写只在下面条件同时满足时发生：
-
-1. 请求路径属于 Emby 常见页面/API 范围，例如根路径、`/web/...`、`/emby/...`、`/Items`、`/Users`、`/Sessions`、`/System`
-2. `Content-Type` 属于以下之一：
-   - `application/json`
-   - `text/html`
-   - `text/xml`
-   - `text/plain`
-   - `application/xml`
-   - `application/xhtml`
-   - `text/javascript`
-   - `application/javascript`
-3. `Content-Encoding` 为空或为 `identity`
-
-常见场景包括：
-
-- `Items` / `PlaybackInfo` 返回里的 `MediaSources`、`DirectStreamUrl`、`TranscodingUrl`
-- Web 页面或脚本里写死的播放地址
-- 主站跳转到其他推流节点时返回的绝对 `Location`
-
-一句话：
-
-- 压缩响应（如 `gzip`、`br`）不会先解压再改写
-- 媒体流默认直接透传
-- 如果 Emby 主站把播放地址指向了另一个上游 host，代理也会把它重新编码回当前代理路径
-- 非 Emby 路径下的普通文本响应不会因为里面出现一个绝对 URL 就被改写
-
-## 媒体流和 WebSocket
-
-### 媒体流
-
-媒体识别是启发式的，不是完整 Emby 协议语义。通常命中以下特征就会走流式透传：
-
-- 路径包含 `/videos/`
-- 路径包含 `/audio/`
-- 路径包含 `/images/`
-- 路径包含 `/items/images`
-- 路径包含 `/stream`
-- 或者文件扩展名是常见视频、音频、图片、字体、压缩包、字幕类型
-
-支持：
-
-- `Range`
-- `If-Range`
-
-### WebSocket
-
-依赖标准升级头：
-
-- `Connection: Upgrade`
-- `Upgrade: websocket`
-
-如果前置代理没把升级头透传对，WebSocket 就起不来。
-
-如果上游拒绝升级，代理会把该 HTTP 响应直接透传给客户端，并记录为 `[PROXY]`，不是 `[WS]`。
+- `LISTEN_ADDR`：监听地址，默认 `:8080`
+- `BLOCK_PRIVATE_TARGETS`：默认 `true`
 
 ## 健康检查
 
@@ -484,82 +235,32 @@ location /custom/ {
 - 状态码：`200`
 - 响应体：`ok`
 
-说明：
+## 常见访问示例
 
-- 根路径 `/` 不是健康检查
-- `/health` 成功时默认不输出访问分类日志
-- 只有写回失败时才记错误日志
+假设你的外部入口是 `https://proxy.example.com`：
 
-## 环境变量
-
-- `LISTEN_ADDR`：默认 `:8080`，服务监听地址
-- `BLOCK_PRIVATE_TARGETS`：默认 `true`。为 `true` 时拒绝私网 / 本机 / 链路本地 / 未指定地址；设为 `false` 时允许这些目标
-
-## 日志怎么读
-
-### 服务日志
-
-- `[SERVER]`：启动和致命退出
-
-```text
-[SERVER] listening on :8080
-[SERVER] fatal: listen tcp :8080: bind: address already in use
-```
-
-### 访问结果日志
-
-- `[API]`：命中文本响应改写
-- `[STREAM]`：媒体流或大文件透传
-- `[PROXY]`：普通透传，或 WebSocket 升级被上游拒绝
-- `[WS]`：WebSocket 成功升级并完成双向转发
-
-```text
-[API] 200 GET emby.example.com/emby/Items | rewritten | 45ms
-[STREAM] 206 GET emby.example.com/Videos/1/stream.mp4 | bytes 1.2 GB | 3m22s
-[PROXY] 200 GET emby.example.com/web/index.html | bytes 156 KB | 89ms
-[PROXY] 426 GET emby.example.com/socket | upgrade rejected | 12ms
-[WS] 101 GET emby.example.com/socket | up 12 KB | down 48 KB | 2m10s
-```
-
-### 异常日志
-
-- `[WARN]`：预期中的断连，比如客户端关闭、EOF、broken pipe、connection reset
-- `[ERROR]`：真正要排查的错误，比如上游不可达、握手失败、读写失败
-
-```text
-[WARN] websocket downstream copy emby.example.com/socket failed: broken pipe
-[ERROR] GET emby.example.com/Items upstream request failed: connection refused
-```
-
-一句话：**`WARN` 多半是用户断开，`ERROR` 才是真的问题。**
+- Emby HTTPS 首页：`https://proxy.example.com/https/emby.example.com/443/`
+- Emby HTTP 首页：`https://proxy.example.com/http/public-emby.example.net/8096/`
+- API 请求：`https://proxy.example.com/http/public-emby.example.net/8096/emby/Items?api_key=xxxx`
+- Web 页面：`https://proxy.example.com/http/public-emby.example.net/8096/web/index.html`
 
 ## 快速排错
 
-按这个顺序看：
-
-### 1. 服务有没有起来
+### 1. 服务是否启动
 
 ```bash
 docker compose ps
 ```
 
-至少要看到：
-
-- `nginx-proxy-manager`
-- `nginx-proxy-manager-db`
-- `emby-proxy`
-
-### 2. 健康检查通不通
+### 2. 健康检查是否正常
 
 ```bash
 curl -i "https://<你的代理域名>/health"
 ```
 
-如果你只是在本机、内网或 Docker 内部网络排查，当然也可以直接打内部 HTTP 地址；但对外给用户用时，入口应该是 HTTPS。
-
 预期：`200 OK`，响应体 `ok`
 
-### 3. 根路径是不是误用了
+### 3. 是否误访问了根路径
 
 ```bash
 curl -i "https://<你的代理域名>/"
@@ -567,46 +268,19 @@ curl -i "https://<你的代理域名>/"
 
 预期：`400 Bad Request`
 
-### 4. 基础代理路径能不能通
+### 4. 基础代理路径是否可达
 
 ```bash
 curl -i "https://proxy.example.com/http/public-emby.example.net/8096/"
 ```
 
-### 5. 文本接口有没有改写 URL
+### 5. WebSocket 是否被前置层正确透传
 
-请求一个 JSON 或 HTML 接口，检查里面的绝对 URL 是否已经变成代理路径。
-
-### 6. 媒体流能不能断点续传
-
-对媒体资源发起带 `Range` 的请求，预期返回 `206 Partial Content`。
-
-### 7. WebSocket 能不能升级
-
-如果需要 WebSocket 的页面打不开，先查前置代理是否真的把升级头透传到了本服务。
+如果实时页面打不开，优先检查前置代理是否传对了升级头。
 
 ## 已知边界
 
-- 这是 Emby 专用轻量工具，不以通用反向代理为目标，不承诺兼容任意网站或 HTTP 应用
-- 媒体识别是启发式的，不保证所有边界路径都完美分类
-- 只有符合条件的 Emby 文本响应才会改写绝对 URL
+- 这是 Emby 专用工具，不承诺兼容任意网站或 HTTP 应用
+- 响应体绝对 URL 改写只覆盖少数 Emby 接口，不是全站 HTML/JSON 重写器
 - 外部 URL 推断依赖 `X-Forwarded-Proto` 和 `X-Forwarded-Host`
-- Docker 镜像本身不做 TLS 终止，公网入口的 HTTPS 一般应该交给 NPM、Caddy、Traefik、Nginx 或其他前置反代
-
-## 项目结构
-
-```text
-├── main.go                           # 入口
-├── handler.go                        # HTTP 主流程编排与响应处理
-├── handler_http_test.go              # 通用 HTTP 代理测试
-├── handler_http_emby_rewrite_test.go # Emby URL 改写回归测试
-├── handler_ws_test.go                # websocket 代理测试
-├── headers.go                        # 请求/响应头规则与辅助函数
-├── target.go                         # 代理路径解析与 target 语义
-├── target_test.go                    # target 语义测试
-├── websocket.go                      # WebSocket 透传逻辑
-├── rewriter.go                       # 响应改写：URL 替换、Header 改写
-├── rewriter_test.go                  # 针对响应改写的测试
-├── Dockerfile                        # 多阶段构建镜像
-└── docker-compose.yml                # NPM、数据库和代理服务的一体化 Compose 部署方案
-```
+- 本服务本身不做 TLS 终止，公网入口的 HTTPS 应由前置反代负责
