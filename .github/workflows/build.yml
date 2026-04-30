@@ -19,7 +19,7 @@ jobs:
 
       - name: Build for Linux
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o emby-proxy-linux-amd64 main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o emby-proxy-linux-amd64 .[cite: 1, 2]
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
