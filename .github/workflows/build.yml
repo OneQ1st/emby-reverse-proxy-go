@@ -1,0 +1,30 @@
+name: Build Linux Binary
+
+on: 
+  push:
+    branches: [ "main" ]  # 当你推送到 main 分支时触发
+  workflow_dispatch:      # 允许你手动点击按钮触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4[cite: 1, 2]
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'[cite: 1, 2]
+
+      - name: Build for Linux
+        run: |
+          # CGO_ENABLED=0 确保静态链接，这样在不同 Linux 发行版上都能运行
+          # -ldflags="-s -w" 可以大幅减小文件体积
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o emby-proxy-linux-amd64 main.go
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: emby-proxy-linux-amd64[cite: 1, 2]
