@@ -2,8 +2,8 @@ name: Build Linux Binary
 
 on: 
   push:
-    branches: [ "main" ]  # 当你推送到 main 分支时触发
-  workflow_dispatch:      # 允许你手动点击按钮触发
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -19,8 +19,6 @@ jobs:
 
       - name: Build for Linux
         run: |
-          # CGO_ENABLED=0 确保静态链接，这样在不同 Linux 发行版上都能运行
-          # -ldflags="-s -w" 可以大幅减小文件体积
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o emby-proxy-linux-amd64 main.go
 
       - name: Upload Artifact
